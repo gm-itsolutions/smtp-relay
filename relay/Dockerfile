@@ -7,7 +7,7 @@
 # Base image pinned by digest for reproducible builds and supply-chain safety.
 # The tag is kept for readability; Docker resolves the digest. Digest bumps are
 # automated via Dependabot (.github/dependabot.yml).
-FROM python:3.12-slim-bookworm@sha256:8a7e7cc04fd3e2bd787f7f24e22d5d119aa590d429b50c95dfe12b3abe52f48b AS base
+FROM python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS base
 
 # Basic hardening / small image layer.
 ENV PYTHONDONTWRITEBYTECODE=1 \

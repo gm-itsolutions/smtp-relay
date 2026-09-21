@@ -18,7 +18,7 @@
 # Base image pinned by digest for reproducible builds and supply-chain safety.
 # The tag is kept for readability; Docker resolves the digest. Digest bumps are
 # automated via Dependabot (.github/dependabot.yml).
-FROM nginxinc/nginx-unprivileged:1.31-alpine@sha256:054e14f543eb688809d59ec2ad1644d1a61678e247c87a318ad605977eb37eaf
+FROM nginxinc/nginx-unprivileged:1.31-alpine@sha256:e75f89810bf5bfbcf58a1cfb32a1a11de55b7623d732e67735d513b720d7436a
 
 # The unprivileged base image runs as uid 101 ("nginx"). Switch to root only
 # for the build steps that need it, then drop back.
