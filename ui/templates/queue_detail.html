@@ -13,6 +13,9 @@
     </tr>
     <tr><th>Received</th><td>{{ row.timestamp_received|dt }}</td></tr>
     <tr><th>From</th><td class="mono">{{ row.sender }}</td></tr>
+    {% if grouped %}
+    {% include "_recipients_rows.html" %}
+    {% else %}
     <tr><th>Recipients</th>
       <td>
         {% if recipients %}
@@ -22,6 +25,7 @@
         {% else %}—{% endif %}
       </td>
     </tr>
+    {% endif %}
     <tr><th>Subject</th><td>{{ row.subject or "—" }}</td></tr>
     <tr><th>Attempts</th><td>{{ row.attempts }}</td></tr>
     <tr><th>Last attempt</th><td>{{ row.last_attempt|dt if row.last_attempt else "—" }}</td></tr>

@@ -1,0 +1,13 @@
+{# To / Cc / Bcc rows for a table.kv. Expects `grouped` from recipients_by_field. #}
+{% for label, key in (("To", "to"), ("Cc", "cc"), ("Bcc", "bcc")) %}
+<tr><th>{{ label }}</th>
+  <td>
+    {% if grouped[key] %}
+      <ul class="plain">
+        {% for a in grouped[key] %}<li class="mono">{{ a }}</li>{% endfor %}
+      </ul>
+      {% if key == "bcc" %}<p class="small muted">Blind copies: hidden from the other recipients.</p>{% endif %}
+    {% else %}—{% endif %}
+  </td>
+</tr>
+{% endfor %}

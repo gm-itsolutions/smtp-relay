@@ -31,7 +31,7 @@ from common.models import (
     MailStatus,
 )
 
-from .helpers import audit_config_change
+from .helpers import audit_config_change, recipients_by_field
 from ..security import SessionPayload, require_csrf, require_user
 from ..templating import render
 
@@ -139,6 +139,7 @@ async def detail_view(
             "session": session,
             "row": row,
             "recipients": recipients,
+            "grouped": recipients_by_field(raw, recipients),
             "headers": headers,
             "body_preview": body_preview,
             "body_truncated": body_truncated,
