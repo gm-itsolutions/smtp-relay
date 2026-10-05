@@ -38,6 +38,7 @@ from common.models import (
 )
 
 from ..config import get_settings
+from .helpers import recipients_by_field
 from ..security import SessionPayload, require_csrf, require_user
 from ..templating import render
 
@@ -218,6 +219,7 @@ async def view(
         raise HTTPException(status_code=500, detail=f"Read error: {exc}") from exc
 
     headers, body_preview, truncated = _split_eml_for_display(raw)
+    envelope = await _queue_envelope_for(resolved)
     rel = resolved.relative_to(_archive_root())
     return render(
         request,
@@ -226,6 +228,7 @@ async def view(
             "session": session,
             "rel_path": str(rel),
             "size": len(raw),
+            "grouped": recipients_by_field(raw, envelope),
             "headers": headers,
             "body_preview": body_preview,
             "body_truncated": truncated,
@@ -343,6 +346,30 @@ def _split_eml_for_display(raw: bytes) -> tuple[list[tuple[str, str]], str, bool
         text = text[:_PREVIEW_BYTES]
         truncated = True
     return headers, text, truncated
+
+
+async def _queue_envelope_for(path: Path) -> list[str]:
+    """Envelope recipients of the queue row that produced this archive file.
+
+    Archives written before blind copies were delivered carry no Bcc
+    header, so their BCC recipients are only known from the queue row's
+    envelope. The file name starts with the queue id; the row is used only
+    while it still exists and still points at this exact file.
+    """
+    prefix = path.name.split("-", 1)[0]
+    if not prefix.isdigit():
+        return []
+    async with session_scope() as s:
+        row = await s.get(MailQueue, int(prefix))
+        if row is None or not row.archive_path:
+            return []
+        try:
+            if Path(row.archive_path).resolve() != path:
+                return []
+            recipients = json.loads(row.recipients_json or "[]")
+        except (OSError, TypeError, ValueError):
+            return []
+    return [r for r in recipients if isinstance(r, str)]
 
 
 def _extract_envelope(raw: bytes) -> tuple[Optional[str], list[str], Optional[str]]:

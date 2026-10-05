@@ -17,6 +17,15 @@
   </form>
 </div>
 
+{% if grouped %}
+<section class="card">
+  <h2>Recipients</h2>
+  <table class="kv">
+    {% include "_recipients_rows.html" %}
+  </table>
+</section>
+{% endif %}
+
 <section class="card">
   <h2>Headers</h2>
   {% if headers %}
