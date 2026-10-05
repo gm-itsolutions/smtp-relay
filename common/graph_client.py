@@ -128,7 +128,7 @@ class GraphClient:
                 raise GraphError(
                     "Certificate authentication is selected but no active "
                     "certificate is present. Generate one and activate it on "
-                    "the Tenant page."
+                    "the app's page under Enterprise apps."
                 )
             certificate = {
                 "private_key": decrypt_str(cfg.cert_private_key_enc),
@@ -142,7 +142,7 @@ class GraphClient:
         if not cfg.client_secret_enc:
             raise GraphError(
                 "Client-secret authentication is selected but no secret is "
-                "stored. Enter one on the Tenant page."
+                "stored. Enter one on the app's page under Enterprise apps."
             )
         return cls(
             cfg.tenant_id,

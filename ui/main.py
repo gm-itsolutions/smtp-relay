@@ -30,6 +30,7 @@ from .routers import (
     auth as auth_router,
     config as config_router,
     dashboard as dashboard_router,
+    enterprise_apps as enterprise_apps_router,
     queue as queue_router,
     smtp_accounts as smtp_accounts_router,
     users as users_router,
@@ -96,6 +97,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router.router)
     app.include_router(dashboard_router.router)
     app.include_router(config_router.router)
+    app.include_router(enterprise_apps_router.router)
     app.include_router(smtp_accounts_router.router)
     app.include_router(queue_router.router)
     app.include_router(archive_router.router)

@@ -16,8 +16,9 @@ Two flows:
 
 Both flows share `send_mail()`, which builds an RFC 5322 message and
 queues it like any other mail; the relay's queue worker then delivers it
-through the configured Graph tenant and archives the `.eml`. Failures are
-recorded in the audit log and never raise — alerts are best-effort.
+through the enterprise app the sender's domain routes to and archives the
+`.eml`. Failures are recorded in the audit log and never raise — alerts are
+best-effort.
 
 Tests: covered by integration tests against a fake Graph endpoint;
 unit tests focus on the digest section assembly because that is the
@@ -43,6 +44,7 @@ from sqlalchemy import func, select
 from . import archive
 from .audit import record as audit_record
 from .db import session_scope
+from .routing import resolve_route
 from .models import (
     AuditEventType,
     AuditLog,
@@ -86,12 +88,13 @@ def _rotation_hint(uses_certificate: bool) -> str:
     """How the operator remediates an expiring credential, per method."""
     if uses_certificate:
         return (
-            "Generate a new certificate on the Tenant page, upload its public "
-            ".cer to the Entra app registration, then activate it."
+            "Generate a new certificate on the app's page under Enterprise "
+            "apps, upload its public .cer to the Entra app registration, then "
+            "activate it."
         )
     return (
         "Rotate the secret in the Azure portal and update the expiry date on "
-        "the Tenant page."
+        "the app's page under Enterprise apps."
     )
 
 
@@ -99,13 +102,16 @@ def secret_expiry_section(
     tenant: TenantConfig | None,
     today: _dt.date,
     threshold_days: int,
+    *,
+    app_name: str | None = None,
 ) -> DigestSection | None:
     """Return a section if the active credential is expiring or past due.
 
     Handles both authentication methods: for a client secret the expiry is
     the operator-supplied date; for a certificate it is the notAfter the app
     recorded at generation time. Named `secret_expiry_section` for backwards
-    compatibility with existing callers.
+    compatibility with existing callers. `app_name` (set when there is more
+    than one enterprise app) names the app in the title.
     """
     if tenant is None:
         return None
@@ -113,6 +119,8 @@ def secret_expiry_section(
     if expiry is None:
         return None
     label = tenant.credential_label  # "client secret" | "certificate"
+    if app_name:
+        label = f"{label} of {app_name!r}"
     hint = _rotation_hint(tenant.uses_certificate)
     days = (expiry - today).days
     if days > threshold_days:
@@ -195,12 +203,14 @@ async def _relay_down_section(s, now: _dt.datetime) -> DigestSection | None:
     )
 
 
-async def _graph_test_failed_section(s) -> DigestSection | None:
-    cfg = await s.get(TenantConfig, 1)
-    if cfg is None or cfg.last_test_ok is not False:
+def _graph_test_failed_section(
+    cfg: TenantConfig, *, app_name: str | None = None
+) -> DigestSection | None:
+    if cfg.last_test_ok is not False:
         return None
+    suffix = f" ({app_name})" if app_name else ""
     return DigestSection(
-        title="Last Graph connection test failed",
+        title=f"Last Graph connection test failed{suffix}",
         body=(
             f"Last test at {cfg.last_test_at.isoformat() if cfg.last_test_at else '?'} UTC.\n"
             f"Error: {cfg.last_test_error or '(none)'}\n"
@@ -242,7 +252,8 @@ async def _send_failures_section(s, now: _dt.datetime) -> DigestSection | None:
         body=(
             "Sustained Graph send failures usually mean the client secret "
             "has expired, the app permissions were revoked, or Graph is "
-            "throttling. Check the Audit page and the Tenant test.\n"
+            "throttling. Check the Audit page and the connection test of "
+            "each enterprise app.\n"
         ),
         severity="warn",
     )
@@ -678,13 +689,24 @@ async def can_send(settings: Settings) -> tuple[bool, str | None]:
         return False, "admin_email_to is not set"
     if not settings.admin_email_from:
         return False, "admin_email_from is not set"
-    if settings.smtp_sender_check_enabled:
-        async with session_scope() as s:
+    async with session_scope() as s:
+        if settings.smtp_sender_check_enabled:
             if not await _sender_is_authorised(s, settings.admin_email_from):
                 return False, (
                     f"Sender {settings.admin_email_from!r} is not in the enabled "
                     "Authorised Senders list."
                 )
+        # Alerts are queued without an app and routed by the sender's domain
+        # when sent, exactly like relayed mail; refuse early if that fails.
+        route = await resolve_route(s, settings.admin_email_from)
+        if not route.ok:
+            return False, (
+                f"Sender {settings.admin_email_from!r} cannot be routed to an "
+                "enterprise app: its domain is not mapped on the Domains page "
+                "and unmapped domains are refused."
+                if route.via == "unmapped"
+                else "No default enterprise app is configured."
+            )
     return True, None
 
 
@@ -794,14 +816,21 @@ async def _collect_digest_sections(now: _dt.datetime) -> list[DigestSection]:
         settings = await s.get(Settings, 1)
         if settings is None:
             return []
-        tenant = await s.get(TenantConfig, 1)
+        apps = (
+            await s.scalars(select(TenantConfig).order_by(TenantConfig.name))
+        ).all()
+        multi = len(apps) > 1
 
         if settings.alert_secret_expiry:
-            sec = secret_expiry_section(
-                tenant, today, settings.alert_secret_expiry_days
-            )
-            if sec:
-                sections.append(sec)
+            for app in apps:
+                sec = secret_expiry_section(
+                    app,
+                    today,
+                    settings.alert_secret_expiry_days,
+                    app_name=app.name if multi else None,
+                )
+                if sec:
+                    sections.append(sec)
         if settings.alert_dead_queue:
             sec = await _dead_queue_section(s)
             if sec:
@@ -811,9 +840,12 @@ async def _collect_digest_sections(now: _dt.datetime) -> list[DigestSection]:
             if sec:
                 sections.append(sec)
         if settings.alert_graph_test_failed:
-            sec = await _graph_test_failed_section(s)
-            if sec:
-                sections.append(sec)
+            for app in apps:
+                sec = _graph_test_failed_section(
+                    app, app_name=app.name if multi else None
+                )
+                if sec:
+                    sections.append(sec)
         if settings.alert_send_failures:
             sec = await _send_failures_section(s, now)
             if sec:

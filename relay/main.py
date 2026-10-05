@@ -91,16 +91,15 @@ async def _wait_for_schema(max_attempts: int = 30, delay_s: float = 2.0) -> None
 
 
 async def _ensure_seed_rows() -> None:
-    """Make sure the single-row config tables exist."""
-    from common.models import Settings, TenantConfig  # local import
+    """Make sure the settings row and a default enterprise app exist."""
+    from common.models import Settings  # local import
+    from common.routing import ensure_default_app
 
     async with session_scope() as session:
         settings = await session.scalar(select(Settings).where(Settings.id == 1))
         if settings is None:
             session.add(Settings(id=1))
-        cfg = await session.scalar(select(TenantConfig).where(TenantConfig.id == 1))
-        if cfg is None:
-            session.add(TenantConfig(id=1))
+        await ensure_default_app(session)
 
 
 # -----------------------------------------------------------------------------

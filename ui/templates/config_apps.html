@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Enterprise apps — Config{% endblock %}
+{% block content %}
+<h1>Configuration</h1>
+{% with active='tenant' %}{% include "_confignav.html" %}{% endwith %}
+
+<section class="card">
+  <h2>Enterprise apps</h2>
+  <p class="small muted">
+    Each enterprise app is one Entra ID app registration with the
+    <strong>Mail.Send</strong> application permission. Add one per
+    Microsoft 365 tenant you send from. Mail is routed to an app by the
+    sender's domain; the <strong>default</strong> app handles every domain
+    without a mapping. Set up the mapping on the
+    <a href="/config/domains">Domains</a> page.
+  </p>
+
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  {% if request.query_params.get('deleted') %}
+    <p class="flash flash-info">Enterprise app deleted.</p>
+  {% endif %}
+
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Name</th><th>Tenant ID</th><th>Credential</th><th>Expires</th>
+        <th>Last test</th><th>Domains</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in apps %}
+      <tr>
+        <td>
+          {{ a.name }}
+          {% if a.is_default %}<span class="pill pill-ok">default</span>{% endif %}
+        </td>
+        <td class="mono small">{{ a.tenant_id or "—" }}</td>
+        <td>
+          {% if a.tenant_id and a.client_id and a.has_active_credential %}
+            {{ a.credential_label }}
+          {% else %}
+            <span class="pill pill-warn">not configured</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if a.credential_expires_at %}
+            {% set days = (a.credential_expires_at - today).days %}
+            <span class="{{ 'error' if days <= 14 else '' }}">{{ a.credential_expires_at }}</span>
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if a.last_test_ok %}
+            <span class="pill pill-ok">OK</span>
+          {% elif a.last_test_ok is sameas false %}
+            <span class="pill pill-err">FAIL</span>
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {{ domain_counts.get(a.id, 0) }}
+          {% if a.is_default %}<span class="small muted">+ unmapped</span>{% endif %}
+        </td>
+        <td><a class="btn btn-small" href="/config/tenant/{{ a.id }}">Open</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card card-narrow">
+  <h2>Add enterprise app</h2>
+  <p class="small muted">
+    Give it a name you will recognise (e.g. the branch or company it
+    belongs to). You enter the tenant and credentials on the next page.
+  </p>
+  <form method="post" action="/config/tenant/new" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      Name
+      <input type="text" name="name" required maxlength="128" placeholder="e.g. Milan branch">
+    </label>
+    <div class="row-actions">
+      <button type="submit" class="btn btn-primary">Add</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

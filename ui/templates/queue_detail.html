@@ -27,6 +27,13 @@
     </tr>
     {% endif %}
     <tr><th>Subject</th><td>{{ row.subject or "—" }}</td></tr>
+    <tr><th>Enterprise app</th>
+      <td>
+        {% if app %}<a href="/config/tenant/{{ app.id }}">{{ app.name }}</a>
+        {% elif row.status.value in ('pending', 'sending') %}<span class="muted">chosen by sender domain when sent</span>
+        {% else %}—{% endif %}
+      </td>
+    </tr>
     <tr><th>Attempts</th><td>{{ row.attempts }}</td></tr>
     <tr><th>Last attempt</th><td>{{ row.last_attempt|dt if row.last_attempt else "—" }}</td></tr>
     <tr><th>Next attempt</th><td>{{ row.next_attempt_at|dt if row.next_attempt_at else "—" }}</td></tr>

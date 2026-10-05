@@ -1,8 +1,8 @@
 """Configuration pages.
 
-One router, five logical sections accessible under `/config`:
+One router, several logical sections accessible under `/config`
+(enterprise apps and domains live in `enterprise_apps.py`):
 
-    /config/tenant                — Entra ID credentials + test connection
     /config/senders               — Authorised senders list
     /config/whitelist             — IP / CIDR whitelist
     /config/settings              — Global settings (bans, retention, ...)
@@ -17,24 +17,18 @@ import datetime as _dt
 import logging
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
 from sqlalchemy import select
 
 from common import admin_alerts
 from common.audit import record as audit_record
-from common.certs import (
-    ALLOWED_VALIDITY_YEARS,
-    DEFAULT_VALIDITY_YEARS,
-    generate_self_signed,
-)
 from common.constants import (
     ARCHIVE_RETENTION_MIN_DAYS,
     AUDIT_RETENTION_MIN_DAYS,
 )
-from common.crypto import encrypt_str
 from common.db import session_scope
-from common.graph_client import GraphClient, GraphError
+from common.routing import resolve_route
 from common.models import (
     AuditEventType,
     AuditOutcome,
@@ -42,7 +36,6 @@ from common.models import (
     Ban,
     IpWhitelistEntry,
     Settings,
-    TenantConfig,
 )
 
 from ..forms import (
@@ -54,7 +47,6 @@ from ..forms import (
     notifications_form,
     sender_form,
     settings_form,
-    tenant_form,
 )
 from .helpers import audit_config_change
 from ..security import SessionPayload, require_csrf, require_user
@@ -65,7 +57,7 @@ _log = logging.getLogger("ui.config")
 
 
 # =============================================================================
-# Tenant (Entra ID)
+# Root
 # =============================================================================
 
 @router.get("", include_in_schema=False)
@@ -74,406 +66,18 @@ async def config_root(request: Request, session: SessionPayload = Depends(requir
     return RedirectResponse("/smtp-accounts", status_code=303)
 
 
-def _tenant_context(
-    request: Request,
-    session: SessionPayload,
-    cfg: TenantConfig | None,
-    *,
-    error: str | None = None,
-) -> dict:
-    return {
-        "session": session,
-        "cfg": cfg,
-        "has_secret": bool(cfg and cfg.client_secret_enc),
-        "has_active_cert": bool(cfg and cfg.cert_thumbprint),
-        "has_pending_cert": bool(cfg and cfg.cert_pending_thumbprint),
-        "cert_years": list(ALLOWED_VALIDITY_YEARS),
-        "cert_default_years": DEFAULT_VALIDITY_YEARS,
-        "today": _utcnow().date(),
-        "error": error,
-        "flash": None,
-    }
-
-
-@router.get("/tenant", include_in_schema=False)
-async def tenant_view(
-    request: Request,
-    session: SessionPayload = Depends(require_user),
-):
-    async with session_scope() as s:
-        cfg = await s.get(TenantConfig, 1)
-    return render(request, "config_tenant.html", _tenant_context(request, session, cfg))
-
-
-@router.post(
-    "/tenant",
-    include_in_schema=False,
-    dependencies=[Depends(require_csrf), Depends(require_user)],
-)
-async def tenant_save(
-    request: Request,
-    tenant_id: str = Form(""),
-    client_id: str = Form(""),
-    auth_method: str = Form("secret"),
-    client_secret: str = Form(""),
-    secret_expires_at: str = Form(""),
-    clear_secret_expires_at: bool = Form(False),
-    expiry_verified: bool = Form(False),
-    session: SessionPayload = Depends(require_user),
-):
-    try:
-        data = tenant_form(
-            tenant_id=tenant_id,
-            client_id=client_id,
-            auth_method=auth_method,
-            client_secret=client_secret,
-            secret_expires_at=secret_expires_at,
-            clear_secret_expires_at=clear_secret_expires_at,
-            expiry_verified=expiry_verified,
-        )
-    except (ValidationError, ValueError) as exc:
-        msg = _first_error(exc) if isinstance(exc, ValidationError) else str(exc)
-        return render(
-            request,
-            "config_tenant.html",
-            _tenant_context(request, session, await _load_tenant(), error=msg),
-            status_code=400,
-        )
-
-    cfg = await _load_tenant()
-
-    # When a new client_secret is being submitted, the operator must
-    # explicitly confirm the expiry date is up-to-date. This guards
-    # against the common "I rotated but forgot to update the date"
-    # mistake.
-    if data.client_secret and not data.expiry_verified:
-        return render(
-            request,
-            "config_tenant.html",
-            _tenant_context(
-                request, session, cfg,
-                error=(
-                    "When updating the client secret you must tick "
-                    "'I have verified the secret expiry date' to confirm "
-                    "the date below reflects the new secret."
-                ),
-            ),
-            status_code=400,
-        )
-
-    # Certificate can only be made the live method once an active certificate
-    # actually exists — otherwise outbound mail would immediately break.
-    if data.auth_method == "certificate" and not (cfg and cfg.cert_thumbprint):
-        return render(
-            request,
-            "config_tenant.html",
-            _tenant_context(
-                request, session, cfg,
-                error=(
-                    "Certificate authentication needs an active certificate. "
-                    "Generate one below, upload its .cer to Entra, then "
-                    "activate it before selecting this method."
-                ),
-            ),
-            status_code=400,
-        )
-
-    async with session_scope() as s:
-        cfg = await s.get(TenantConfig, 1)
-        if cfg is None:
-            cfg = TenantConfig(id=1)
-            s.add(cfg)
-        cfg.tenant_id = data.tenant_id
-        cfg.client_id = data.client_id
-        cfg.auth_method = data.auth_method
-        if data.client_secret:
-            cfg.client_secret_enc = encrypt_str(data.client_secret)
-        if data.clear_secret_expires_at:
-            cfg.secret_expires_at = None
-        elif data.secret_expires_at is not None:
-            cfg.secret_expires_at = data.secret_expires_at
-        # Invalidate cached test status — the operator must re-run it.
-        cfg.last_test_at = None
-        cfg.last_test_ok = None
-        cfg.last_test_error = None
-
-        await audit_config_change(
-            s, session, request,
-            details={
-                "section": "tenant",
-                "tenant_id": data.tenant_id,
-                "client_id": data.client_id,
-                "auth_method": data.auth_method,
-                "secret_updated": bool(data.client_secret),
-                "secret_expires_at": (
-                    cfg.secret_expires_at.isoformat()
-                    if cfg.secret_expires_at else None
-                ),
-            },
-        )
-    return RedirectResponse("/config/tenant?saved=1", status_code=303)
-
-
-@router.post(
-    "/tenant/test",
-    include_in_schema=False,
-    dependencies=[Depends(require_csrf), Depends(require_user)],
-)
-async def tenant_test(
-    request: Request,
-    session: SessionPayload = Depends(require_user),
-):
-    """Try to acquire a Graph token with the stored credentials."""
-    now = _utcnow()
-    ok = False
-    err: str | None = None
-    expires_at: _dt.datetime | None = None
-
-    async with session_scope() as s:
-        cfg = await s.get(TenantConfig, 1)
-        if (
-            cfg is None
-            or not cfg.tenant_id
-            or not cfg.client_id
-            or not cfg.has_active_credential
-        ):
-            err = "Tenant configuration is incomplete."
-        else:
-            try:
-                client = GraphClient.from_tenant_config(cfg)
-                import asyncio
-                info = await asyncio.to_thread(client.acquire_token)
-                ok = True
-                expires_at = info.expires_at.replace(tzinfo=None)
-            except GraphError as exc:
-                err = str(exc)
-            except Exception as exc:
-                err = f"Unexpected error: {exc}"
-
-        if cfg is None:
-            cfg = TenantConfig(id=1)
-            s.add(cfg)
-        cfg.last_test_at = now
-        cfg.last_test_ok = ok
-        cfg.last_test_error = None if ok else (err or "Unknown error")[:2000]
-        if ok:
-            cfg.last_token_acquired_at = now
-            cfg.last_token_expires_at = expires_at
-
-        # NB: kept as raw audit_record because the outcome is conditional
-        # on the Graph test result (SUCCESS vs FAILURE), while
-        # audit_config_change() is hard-coded to SUCCESS.
-        await audit_record(
-            s,
-            event_type=AuditEventType.CONFIG_CHANGE,
-            outcome=AuditOutcome.SUCCESS if ok else AuditOutcome.FAILURE,
-            username=session.username,
-            source_ip=request.client.host if request.client else None,
-            details={
-                "section": "tenant",
-                "action": "test_connection",
-                "ok": ok,
-                "error": None if ok else err,
-            },
-        )
-    return RedirectResponse("/config/tenant?tested=1", status_code=303)
-
-
-async def _load_tenant() -> TenantConfig | None:
-    async with session_scope() as s:
-        return await s.get(TenantConfig, 1)
-
-
-# -----------------------------------------------------------------------------
-# Certificate credential lifecycle
-#
-# Generate -> a new key pair lands in the *pending* slot only; it never
-# touches the live signing key, so generating never disrupts sending.
-# The operator downloads its .cer, uploads it to Entra, then Activates it
-# (pending -> active). Discard drops a pending certificate.
-# -----------------------------------------------------------------------------
-
-@router.post(
-    "/tenant/cert/generate",
-    include_in_schema=False,
-    dependencies=[Depends(require_csrf), Depends(require_user)],
-)
-async def tenant_cert_generate(
-    request: Request,
-    cert_valid_years: int = Form(DEFAULT_VALIDITY_YEARS),
-    session: SessionPayload = Depends(require_user),
-):
-    if cert_valid_years not in ALLOWED_VALIDITY_YEARS:
-        return render(
-            request,
-            "config_tenant.html",
-            _tenant_context(
-                request, session, await _load_tenant(),
-                error=(
-                    "Invalid certificate validity. Choose one of: "
-                    + ", ".join(f"{y}" for y in ALLOWED_VALIDITY_YEARS)
-                    + " year(s)."
-                ),
-            ),
-            status_code=400,
-        )
-
-    # Generation (RSA keygen) is CPU-bound; keep the event loop responsive.
-    import asyncio
-    gen = await asyncio.to_thread(
-        generate_self_signed, "smtp-relay", cert_valid_years
-    )
-
-    async with session_scope() as s:
-        cfg = await s.get(TenantConfig, 1)
-        if cfg is None:
-            cfg = TenantConfig(id=1)
-            s.add(cfg)
-        cfg.cert_pending_private_key_enc = encrypt_str(gen.private_key_pem)
-        cfg.cert_pending_public_pem = gen.public_cert_pem
-        cfg.cert_pending_thumbprint = gen.thumbprint_sha1
-        cfg.cert_pending_not_after = gen.not_after.date()
-        cfg.cert_pending_created_at = _utcnow()
-
-        await audit_config_change(
-            s, session, request,
-            details={
-                "section": "tenant",
-                "action": "cert_generate",
-                "thumbprint": gen.thumbprint_sha1,
-                "not_after": gen.not_after.date().isoformat(),
-                "valid_years": cert_valid_years,
-            },
-        )
-    return RedirectResponse("/config/tenant?cert_generated=1", status_code=303)
-
-
-@router.post(
-    "/tenant/cert/activate",
-    include_in_schema=False,
-    dependencies=[Depends(require_csrf), Depends(require_user)],
-)
-async def tenant_cert_activate(
-    request: Request,
-    session: SessionPayload = Depends(require_user),
-):
-    """Promote the pending certificate to active and make it the live method.
-
-    Do this only after uploading the pending .cer to the Entra app
-    registration, or token acquisition will fail.
-    """
-    cfg = await _load_tenant()
-    if cfg is None or not cfg.cert_pending_thumbprint:
-        return render(
-            request,
-            "config_tenant.html",
-            _tenant_context(
-                request, session, cfg,
-                error="There is no pending certificate to activate.",
-            ),
-            status_code=400,
-        )
-
-    async with session_scope() as s:
-        cfg = await s.get(TenantConfig, 1)
-        thumbprint = cfg.cert_pending_thumbprint
-        cfg.cert_private_key_enc = cfg.cert_pending_private_key_enc
-        cfg.cert_public_pem = cfg.cert_pending_public_pem
-        cfg.cert_thumbprint = cfg.cert_pending_thumbprint
-        cfg.cert_not_after = cfg.cert_pending_not_after
-        cfg.cert_created_at = cfg.cert_pending_created_at or _utcnow()
-        cfg.cert_subject = "smtp-relay"
-        # Clear the staging slot.
-        cfg.cert_pending_private_key_enc = None
-        cfg.cert_pending_public_pem = None
-        cfg.cert_pending_thumbprint = None
-        cfg.cert_pending_not_after = None
-        cfg.cert_pending_created_at = None
-        # Switch the live method and force a re-test.
-        cfg.auth_method = "certificate"
-        cfg.last_test_at = None
-        cfg.last_test_ok = None
-        cfg.last_test_error = None
-
-        await audit_config_change(
-            s, session, request,
-            details={
-                "section": "tenant",
-                "action": "cert_activate",
-                "thumbprint": thumbprint,
-            },
-        )
-    return RedirectResponse("/config/tenant?cert_activated=1", status_code=303)
-
-
-@router.post(
-    "/tenant/cert/discard",
-    include_in_schema=False,
-    dependencies=[Depends(require_csrf), Depends(require_user)],
-)
-async def tenant_cert_discard(
-    request: Request,
-    session: SessionPayload = Depends(require_user),
-):
-    async with session_scope() as s:
-        cfg = await s.get(TenantConfig, 1)
-        if cfg is None or not cfg.cert_pending_thumbprint:
-            return RedirectResponse("/config/tenant", status_code=303)
-        thumbprint = cfg.cert_pending_thumbprint
-        cfg.cert_pending_private_key_enc = None
-        cfg.cert_pending_public_pem = None
-        cfg.cert_pending_thumbprint = None
-        cfg.cert_pending_not_after = None
-        cfg.cert_pending_created_at = None
-
-        await audit_config_change(
-            s, session, request,
-            details={
-                "section": "tenant",
-                "action": "cert_discard",
-                "thumbprint": thumbprint,
-            },
-        )
-    return RedirectResponse("/config/tenant?cert_discarded=1", status_code=303)
-
-
-def _cer_response(pem: str, thumbprint: str | None) -> Response:
-    """Serve a PEM public certificate as a downloadable .cer attachment."""
-    tag = (thumbprint or "cert")[:8]
-    return PlainTextResponse(
-        pem,
-        media_type="application/x-pem-file",
-        headers={
-            "Content-Disposition": f'attachment; filename="smtp-relay-{tag}.cer"'
-        },
-    )
-
-
-@router.get("/tenant/cert/active.cer", include_in_schema=False)
-async def tenant_cert_download_active(
-    request: Request,
-    session: SessionPayload = Depends(require_user),
-):
-    cfg = await _load_tenant()
-    if cfg is None or not cfg.cert_public_pem:
-        raise HTTPException(status_code=404)
-    return _cer_response(cfg.cert_public_pem, cfg.cert_thumbprint)
-
-
-@router.get("/tenant/cert/pending.cer", include_in_schema=False)
-async def tenant_cert_download_pending(
-    request: Request,
-    session: SessionPayload = Depends(require_user),
-):
-    cfg = await _load_tenant()
-    if cfg is None or not cfg.cert_pending_public_pem:
-        raise HTTPException(status_code=404)
-    return _cer_response(cfg.cert_pending_public_pem, cfg.cert_pending_thumbprint)
-
-
 # =============================================================================
 # Authorised senders
 # =============================================================================
+
+async def _sender_routes(s, rows) -> dict[int, str]:
+    """sender row id -> the enterprise app its mail is routed to."""
+    out: dict[int, str] = {}
+    for row in rows:
+        route = await resolve_route(s, row.address)
+        out[row.id] = route.app.name if route.ok else "refused (domain not mapped)"
+    return out
+
 
 @router.get("/senders", include_in_schema=False)
 async def senders_view(
@@ -488,12 +92,14 @@ async def senders_view(
         ).all()
         settings = await s.get(Settings, 1)
         check_enabled = settings.smtp_sender_check_enabled if settings else True
+        routes = await _sender_routes(s, rows)
     return render(
         request,
         "config_senders.html",
         {
             "session": session,
             "rows": rows,
+            "routes": routes,
             "check_enabled": check_enabled,
             "error": None,
         },
@@ -552,12 +158,14 @@ async def senders_add(
             rows = (await s.scalars(select(AuthorisedSender))).all()
             settings = await s.get(Settings, 1)
             check_enabled = settings.smtp_sender_check_enabled if settings else True
+            routes = await _sender_routes(s, rows)
         return render(
             request,
             "config_senders.html",
             {
                 "session": session,
                 "rows": rows,
+                "routes": routes,
                 "check_enabled": check_enabled,
                 "error": _first_error(exc),
             },

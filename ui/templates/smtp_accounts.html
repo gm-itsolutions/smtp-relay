@@ -28,18 +28,21 @@
       Description (optional)
       <input type="text" name="description">
     </label>
+    {% with restricted=false, selected_ids=[] %}{% include "_app_scope_fields.html" %}{% endwith %}
     <button type="submit" class="btn btn-primary">Create</button>
   </form>
 </section>
 
 <section class="card">
   <h2>Existing accounts ({{ rows|length }})</h2>
+  {% set show_apps = apps|length > 1 or rows|selectattr('restrict_apps')|list %}
   {% if rows %}
   <table class="data">
     <thead>
       <tr>
         <th>Username</th>
         <th>Allowed IPs</th>
+        {% if show_apps %}<th>Enterprise apps</th>{% endif %}
         <th>Description</th>
         <th>Status</th>
         <th>Created</th>
@@ -58,6 +61,18 @@
             <span class="muted">any</span>
           {% endif %}
         </td>
+        {% if show_apps %}
+        <td class="small">
+          {% if r.restrict_apps %}
+            {% set ids = allowed.get(r.id, []) %}
+            {% if ids %}
+              {% for i in ids|sort %}{{ app_names[i] }}{{ ', ' if not loop.last else '' }}{% endfor %}
+            {% else %}<span class="error">none</span>{% endif %}
+          {% else %}
+            <span class="muted">all</span>
+          {% endif %}
+        </td>
+        {% endif %}
         <td>{{ r.description or "" }}</td>
         <td>
           <span class="pill pill-{{ 'ok' if r.is_enabled else 'muted' }}">

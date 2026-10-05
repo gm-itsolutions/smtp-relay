@@ -147,7 +147,13 @@ async def dashboard(
 
     async with session_scope() as s:
         hb = await s.get(RelayHeartbeat, 1)
-        tenant = await s.get(TenantConfig, 1)
+        apps = (
+            await s.scalars(
+                select(TenantConfig).order_by(
+                    TenantConfig.is_default.desc(), TenantConfig.name
+                )
+            )
+        ).all()
         settings = await s.get(Settings, 1)
 
         stats_24h = await _stats_for_window(s, day_ago)
@@ -184,7 +190,11 @@ async def dashboard(
     # see _archive_disk_stats.
     disk_bytes, disk_total, disk_pct = await _archive_disk_stats()
 
-    token_warn = _token_warning(tenant, now)
+    # Prefix per-app messages with the app name once there is more than one.
+    multi = len(apps) > 1
+
+    def _named(app: TenantConfig, message: str) -> str:
+        return f"{app.name}: {message}" if multi else message
 
     alerts: list[dict[str, str]] = []
     if dead_count:
@@ -202,8 +212,12 @@ async def dashboard(
                 "message": f"{len(active_bans)} active ban(s).",
             }
         )
-    if token_warn:
-        alerts.append({"level": "warn", "message": token_warn})
+    if not apps:
+        alerts.append({"level": "warn", "message": "No enterprise app is configured yet."})
+    for app in apps:
+        token_warn = _token_warning(app, now)
+        if token_warn:
+            alerts.append({"level": "warn", "message": _named(app, token_warn)})
     if disk_pct >= 80:
         alerts.append(
             {
@@ -228,9 +242,11 @@ async def dashboard(
             }
         )
 
-    expiry_alert = _secret_expiry_alert(tenant, settings, now.date())
-    if expiry_alert:
-        alerts.append(expiry_alert)
+    for app in apps:
+        expiry_alert = _secret_expiry_alert(app, settings, now.date())
+        if expiry_alert:
+            expiry_alert["message"] = _named(app, expiry_alert["message"])
+            alerts.append(expiry_alert)
 
     return render(
         request,
@@ -241,7 +257,7 @@ async def dashboard(
             "stats": {"h24": stats_24h, "d7": stats_7d, "d30": stats_30d},
             "pending": pending_or_sending,
             "dead": dead_count,
-            "tenant": tenant,
+            "apps": apps,
             "settings": settings,
             "active_bans": active_bans,
             "recent_events": recent_events,
@@ -255,11 +271,11 @@ async def dashboard(
 
 def _token_warning(tenant: TenantConfig | None, now: _dt.datetime) -> str | None:
     if tenant is None:
-        return "Entra tenant is not configured yet."
+        return "Enterprise app is not configured yet."
     if not tenant.tenant_id or not tenant.client_id or not tenant.has_active_credential:
-        return "Entra tenant configuration is incomplete."
+        return "Enterprise app configuration is incomplete."
     if tenant.last_test_ok is False:
-        return "Last Graph connection test failed — check the Config page."
+        return "Last Graph connection test failed — check Config → Enterprise apps."
     expires = tenant.last_token_expires_at
     if expires is None:
         return None

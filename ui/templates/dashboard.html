@@ -46,38 +46,46 @@
 
   <section class="card">
     <h2>Graph API</h2>
-    <table class="kv">
-      <tr>
-        <th>Configured</th>
-        <td>
-          {% if tenant and tenant.tenant_id and tenant.client_id and tenant.has_active_credential %}
-            yes <span class="small muted">({{ 'certificate' if tenant.uses_certificate else 'client secret' }})</span>
-          {% else %}
-            <span class="error">no</span>
-          {% endif %}
-        </td>
-      </tr>
-      <tr>
-        <th>Last test</th>
-        <td>
-          {% if tenant and tenant.last_test_at %}
-            {{ tenant.last_test_at|dt }} —
-            {% if tenant.last_test_ok %}
-              <span class="pill pill-ok">OK</span>
+    {% if apps %}
+    <table class="data">
+      <thead>
+        <tr><th>Enterprise app</th><th>Configured</th><th>Last test</th><th>Token expires</th></tr>
+      </thead>
+      <tbody>
+        {% for a in apps %}
+        <tr>
+          <td>
+            <a href="/config/tenant/{{ a.id }}">{{ a.name }}</a>
+            {% if a.is_default %}<span class="pill pill-ok">default</span>{% endif %}
+          </td>
+          <td>
+            {% if a.tenant_id and a.client_id and a.has_active_credential %}
+              yes <span class="small muted">({{ a.credential_label }})</span>
             {% else %}
-              <span class="pill pill-err">FAIL</span>
+              <span class="error">no</span>
             {% endif %}
-          {% else %}—{% endif %}
-        </td>
-      </tr>
-      <tr><th>Token acquired</th><td>{{ tenant.last_token_acquired_at|dt if tenant else "—" }}</td></tr>
-      <tr><th>Token expires</th><td>{{ tenant.last_token_expires_at|dt if tenant else "—" }}</td></tr>
-      {% if tenant and tenant.last_test_error %}
-      <tr><th>Last error</th><td class="error">{{ tenant.last_test_error }}</td></tr>
-      {% endif %}
+          </td>
+          <td>
+            {% if a.last_test_at %}
+              {{ a.last_test_at|dt }} —
+              {% if a.last_test_ok %}
+                <span class="pill pill-ok">OK</span>
+              {% else %}
+                <span class="pill pill-err">FAIL</span>
+              {% endif %}
+            {% else %}—{% endif %}
+            {% if a.last_test_error %}<div class="error small">{{ a.last_test_error }}</div>{% endif %}
+          </td>
+          <td>{{ a.last_token_expires_at|dt if a.last_token_expires_at else "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
     </table>
+    {% else %}
+    <p class="error">No enterprise app is configured.</p>
+    {% endif %}
     <p class="small muted">
-      <a href="/config/tenant">Go to Config → Tenant to re-run the test.</a>
+      <a href="/config/tenant">Go to Config → Enterprise apps to re-run a test.</a>
     </p>
   </section>
 

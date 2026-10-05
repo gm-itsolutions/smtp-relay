@@ -202,7 +202,9 @@ Browse to `https://<your-server-ip>/`. Accept the self-signed certificate warnin
 
 ### 6. Configure Microsoft 365
 
-*Config → Tenant* — paste the Tenant ID, Client ID, and Client Secret from your Entra app registration (see [Microsoft Entra ID setup](#microsoft-entra-id-setup) below). Save, then click **Test connection**.
+*Config → Enterprise apps* — open the **Default** app and paste the Tenant ID, Client ID, and Client Secret from your Entra app registration (see [Microsoft Entra ID setup](#microsoft-entra-id-setup) below). Save, then click **Test connection**.
+
+Sending from more than one Microsoft 365 tenant? See [Multiple tenants](#multiple-tenants).
 
 ### 7. Add authorised senders
 
@@ -287,23 +289,24 @@ Everything happens in the Entra admin center. No Exchange Online configuration n
    - *Application (client) ID*
 
 3. **Add a credential — choose one:** a client secret *or* a certificate.
-   On the relay's *Config → Tenant* page, pick the matching **Authentication
-   method**.
+   On the app's page under *Config → Enterprise apps*, pick the matching
+   **Authentication method**.
 
    **Option A — Client secret** (simplest)
    *Certificates & secrets* → *Client secrets* → *New client secret*.
    - Set an expiry matching your rotation policy (e.g. 1 year).
    - **Copy the Value immediately** — it is only shown once. Paste it on the
-     Tenant page and record its expiry date.
+     app's page and record its expiry date.
 
    **Option B — Certificate** (more secure, recommended)
    The relay generates the key pair for you, so the private key never leaves
    the deployment and its expiry is tracked automatically.
-   1. On *Config → Tenant*, under **Certificate credential**, click
+   1. On the app's page under *Config → Enterprise apps*, under
+      **Certificate credential**, click
       **Generate certificate** (validity 1/2/3/5 years, default 5).
    2. **Download the `.cer`** and upload it in Entra:
       *Certificates & secrets* → *Certificates* → *Upload certificate*.
-   3. Back on the Tenant page, click **Activate** — this promotes the staged
+   3. Back on the app's page, click **Activate** — this promotes the staged
       certificate to the live credential. Generating never disrupts an
       in-use certificate, so rotation is zero-downtime: generate → upload →
       activate.
@@ -316,15 +319,42 @@ Everything happens in the Entra admin center. No Exchange Online configuration n
 
 5. Done. No SMTP AUTH configuration needed anywhere.
 
+### Multiple tenants
+
+A company with several Microsoft 365 tenants (for example one per branch)
+can send through all of them from a single relay. An app registration can
+only send as mailboxes of its own tenant, so the relay picks the app from
+the sender's domain:
+
+1. *Config → Enterprise apps* — add one enterprise app per tenant and set
+   up each one as described above (its own app registration, credential and
+   `Mail.Send` consent), then **Test connection**.
+2. *Config → Domains* — map each sender domain to the app of its tenant.
+   The **default app** handles every domain without a mapping; optionally,
+   tick *Refuse senders whose domain is not mapped* to reject those instead.
+3. Optionally, on an SMTP account, choose *Only the apps selected below*
+   so that account can only send for the domains of those apps (for example
+   so a branch's devices cannot send as another branch). Clients let in by
+   the IP whitelist are not limited by this setting.
+
+The relay picks the app when the client sends `MAIL FROM`, so a sender it
+cannot route (or an account using an app it is not allowed to) is refused
+right away with `550 Sender not authorized`; the reason is in the audit log.
+The *Authorised senders* page shows which app each sender goes through.
+
+Upgrading from a version with a single tenant needs no action: the existing
+configuration becomes the default app, named *Default*, and the domains of
+your authorised senders are mapped to it automatically.
+
 ---
 
 ## Day-to-day operation
 
-- **Dashboard** — relay status, mail stats (24h/7d/30d), Graph token state, disk usage, recent audit events.
+- **Dashboard** — relay status, mail stats (24h/7d/30d), Graph token state per enterprise app, disk usage, recent audit events.
 - **Queue** — filter by status (`pending / sending / sent / failed / dead`). Retry individual messages or all dead ones at once.
 - **Archive** — browse by date, preview headers and body, download the raw `.eml`, or resend.
 - **Audit log** — filter by event type, outcome, user, IP, date. Export as CSV.
-- **Config** — all settings in one place: SMTP accounts, IP whitelist, authorised senders, tenant, notifications, users, global settings and bans.
+- **Config** — all settings in one place: SMTP accounts, IP whitelist, authorised senders, enterprise apps, domains, notifications, users, global settings and bans.
 
 ---
 
@@ -438,11 +468,11 @@ docker compose run --rm ui alembic -c ui/alembic.ini upgrade head
 
 **`AADSTS7000215: Invalid client secret`** — secret is wrong or expired; generate a new one in Entra ID.
 
-**`AADSTS700027: Client assertion contains an invalid signature` / certificate errors** — when using certificate auth, the public `.cer` was not uploaded to the app registration (or you activated a new certificate without uploading it first). Upload the certificate under *Certificates & secrets → Certificates*, then re-test on *Config → Tenant*.
+**`AADSTS700027: Client assertion contains an invalid signature` / certificate errors** — when using certificate auth, the public `.cer` was not uploaded to the app registration (or you activated a new certificate without uploading it first). Upload the certificate under *Certificates & secrets → Certificates*, then re-test on the app's page under *Config → Enterprise apps*.
 
 **`AADSTS700016: Application was not found`** — wrong client ID or tenant ID.
 
-**Message stuck in `pending`** — Graph connection is broken; go to *Config → Tenant*, fix and test, then retry the message from *Queue*.
+**Message stuck in `pending`** — Graph connection is broken; the message's page under *Queue* shows which enterprise app it uses. Open that app under *Config → Enterprise apps*, fix and test, then retry the message from *Queue*.
 
 **`530 Authentication required` from a whitelisted IP** — the relay sees the Docker bridge NAT address. Check the actual source IP in *Queue → \<row\>* and whitelist that.
 

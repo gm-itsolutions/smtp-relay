@@ -36,6 +36,7 @@
       Description
       <input type="text" name="description" value="{{ row.description or '' }}">
     </label>
+    {% with restricted=row.restrict_apps, selected_ids=allowed_ids %}{% include "_app_scope_fields.html" %}{% endwith %}
     <div class="row-actions">
       <button type="submit" class="btn btn-primary">Save</button>
       <a class="btn" href="/smtp-accounts">Cancel</a>
