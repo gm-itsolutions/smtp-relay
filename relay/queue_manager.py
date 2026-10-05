@@ -33,6 +33,7 @@ from common.audit import record as audit_record
 from common.constants import QUEUE_BACKOFF_SECONDS, QUEUE_MAX_ATTEMPTS_DEFAULT
 from common.db import session_scope
 from common.graph_client import GraphClient, GraphError, credential_fingerprint
+from common.routing import resolve_route
 from common.models import (
     AuditEventType,
     AuditOutcome,
@@ -60,8 +61,13 @@ async def enqueue(
     raw_mime: bytes,
     source_ip: str | None,
     source_username: str | None,
+    app_id: int | None = None,
 ) -> int:
-    """Persist one incoming message. Returns the new queue id."""
+    """Persist one incoming message. Returns the new queue id.
+
+    `app_id` is the enterprise app chosen at MAIL FROM; None leaves the
+    choice to the worker (routed by sender domain at send time).
+    """
     subject = _extract_subject(raw_mime)
     encoded = base64.b64encode(raw_mime).decode("ascii")
 
@@ -76,6 +82,7 @@ async def enqueue(
             next_attempt_at=_utcnow(),
             source_ip=source_ip,
             source_username=source_username,
+            tenant_config_id=app_id,
         )
         session.add(row)
         await session.flush()
@@ -219,9 +226,9 @@ class QueueWorker:
         self._poll = poll_interval_seconds
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
-        # Cache a GraphClient per (tenant_id, client_id). Rebuilt when
-        # the tenant config changes.
-        self._graph: GraphClient | None = None
+        # One cached GraphClient per enterprise app id, each rebuilt when
+        # that app's credential changes.
+        self._graph: dict[int, GraphClient] = {}
 
     # Lifecycle ---------------------------------------------------------
 
@@ -284,32 +291,50 @@ class QueueWorker:
 
     # Per-message processing -------------------------------------------
 
-    async def _graph_client(self) -> GraphClient:
-        """Return a cached GraphClient for the currently-configured tenant.
+    async def _graph_client(self, app_id: int) -> GraphClient:
+        """Return a cached GraphClient for enterprise app `app_id`.
 
-        The client is rebuilt whenever the active credential changes — a
-        secret rotation, a certificate activation, or a different tenant/
+        The client is rebuilt whenever the app's active credential changes —
+        a secret rotation, a certificate activation, or a different tenant/
         client id — detected via `credential_fingerprint` without decrypting
         anything. Building happens inside the session so the row's encrypted
         material is still loaded.
         """
         async with session_scope() as session:
-            cfg = await session.scalar(
-                select(TenantConfig).where(TenantConfig.id == 1)
-            )
-            if cfg is None or not cfg.tenant_id or not cfg.client_id:
+            cfg = await session.get(TenantConfig, app_id)
+            if cfg is None:
+                self._graph.pop(app_id, None)
                 raise GraphError(
-                    "Entra tenant configuration is missing. Configure it "
-                    "in the UI before enabling the relay."
+                    f"Enterprise app #{app_id} no longer exists."
                 )
-            if (
-                self._graph is not None
-                and self._graph.fingerprint == credential_fingerprint(cfg)
-            ):
-                return self._graph
+            if not cfg.tenant_id or not cfg.client_id:
+                raise GraphError(
+                    f"Enterprise app {cfg.name!r} is not configured. "
+                    "Configure it in the UI before sending through it."
+                )
+            cached = self._graph.get(app_id)
+            if cached is not None and cached.fingerprint == credential_fingerprint(cfg):
+                return cached
             # Raises GraphError if the selected credential has no material.
-            self._graph = GraphClient.from_tenant_config(cfg)
-        return self._graph
+            client = GraphClient.from_tenant_config(cfg)
+            self._graph[app_id] = client
+        return client
+
+    async def _route_row(self, row_id: int, sender: str) -> int:
+        """Pick (and remember) the app for a row queued without one."""
+        async with session_scope() as session:
+            route = await resolve_route(session, sender)
+            if not route.ok:
+                raise GraphError(
+                    "No enterprise app for this sender: its domain is not "
+                    "mapped and unmapped domains are refused."
+                    if route.via == "unmapped"
+                    else "No default enterprise app is configured."
+                )
+            row = await session.get(MailQueue, row_id)
+            if row is not None:
+                row.tenant_config_id = route.app.id
+            return route.app.id
 
     async def _process(self, row_id: int) -> None:
         # 1. Load the row.
@@ -332,12 +357,15 @@ class QueueWorker:
             )
             source_ip = row.source_ip
             source_username = row.source_username
+            app_id = row.tenant_config_id
 
         # 2. Try to send via Graph. Token acquisition errors + Graph
         # errors both surface as GraphError.
         graph_error: str | None = None
         try:
-            client = await self._graph_client()
+            if app_id is None:
+                app_id = await self._route_row(row_id, sender)
+            client = await self._graph_client(app_id)
             await asyncio.to_thread(client.send_mime, sender, raw)
         except GraphError as exc:
             graph_error = str(exc)
@@ -404,6 +432,7 @@ class QueueWorker:
                         "queue_id": row.id,
                         "sender": sender,
                         "recipients": json.loads(row.recipients_json),
+                        "app_id": app_id,
                     },
                 )
 
@@ -411,9 +440,7 @@ class QueueWorker:
                 # so the dashboard reflects a healthy Graph connection.
                 try:
                     info = client.acquire_token()
-                    cfg = await session.scalar(
-                        select(TenantConfig).where(TenantConfig.id == 1)
-                    )
+                    cfg = await session.get(TenantConfig, app_id)
                     if cfg is not None:
                         cfg.last_token_acquired_at = now
                         cfg.last_token_expires_at = info.expires_at.replace(
@@ -435,6 +462,7 @@ class QueueWorker:
                 details={
                     "queue_id": row.id,
                     "sender": sender,
+                    "app_id": app_id,
                     "attempts": attempts,
                     "error": graph_error[:500],
                 },

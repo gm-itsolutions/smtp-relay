@@ -19,6 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+# ASCII hostname with at least two labels; IDN domains go in punycode.
+_DOMAIN_RE = re.compile(
+    r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$"
+)
 
 
 def _clean(value: str | None) -> str:
@@ -28,6 +32,7 @@ def _clean(value: str | None) -> str:
 class TenantConfigIn(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
+    name: Annotated[str, Field(min_length=1, max_length=128)]
     tenant_id: Annotated[str, Field(min_length=1, max_length=64)]
     client_id: Annotated[str, Field(min_length=1, max_length=64)]
     # Which credential is live: "secret" or "certificate".
@@ -180,6 +185,33 @@ class SenderIn(BaseModel):
         return v
 
 
+class AppNameIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: Annotated[str, Field(min_length=1, max_length=128)]
+
+
+class DomainIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    domain: Annotated[str, Field(min_length=3, max_length=253)]
+    app_id: int
+    description: Annotated[str, Field(max_length=255)] = ""
+
+    @field_validator("domain")
+    @classmethod
+    def _valid_domain(cls, v: str) -> str:
+        v = v.strip().lower().rstrip(".")
+        if v.startswith("@"):
+            v = v[1:]
+        if not _DOMAIN_RE.match(v):
+            raise ValueError(
+                "Not a valid domain (e.g. contoso.com; use punycode for "
+                "international domains)."
+            )
+        return v
+
+
 class SmtpAccountIn(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -216,6 +248,7 @@ class SmtpAccountIn(BaseModel):
 # -----------------------------------------------------------------------------
 
 def tenant_form(
+    name: str = Form(""),
     tenant_id: str = Form(""),
     client_id: str = Form(""),
     auth_method: str = Form("secret"),
@@ -234,6 +267,7 @@ def tenant_form(
                 f"Invalid expiry date: {exc}. Expected YYYY-MM-DD."
             ) from exc
     return TenantConfigIn(
+        name=_clean(name),
         tenant_id=_clean(tenant_id),
         client_id=_clean(client_id),
         auth_method=auth_method,

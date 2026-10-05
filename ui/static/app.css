@@ -260,6 +260,17 @@ fieldset legend {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
 }
+.inline-form select {
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+/* A per-row form inside a table cell: no extra vertical space. */
+td .inline-form { margin: 0; }
 
 /* Reusable inline text/password input matching the classic field look,
    for inputs that live outside a <label> (e.g. table-row actions). */

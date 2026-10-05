@@ -1,11 +1,26 @@
 {% extends "base.html" %}
-{% block title %}Tenant — Config{% endblock %}
+{% block title %}{{ cfg.name }} — Enterprise apps{% endblock %}
 {% block content %}
 <h1>Configuration</h1>
 {% with active='tenant' %}{% include "_confignav.html" %}{% endwith %}
 
+<p><a href="/config/tenant">← all enterprise apps</a></p>
+
 <section class="card">
-  <h2>Entra ID (Azure AD) tenant</h2>
+  <h2>
+    {{ cfg.name }}
+    {% if cfg.is_default %}<span class="pill pill-ok">default</span>{% endif %}
+  </h2>
+  <p class="small">
+    {% if domains %}
+      Sends for: <span class="mono">{{ domains|join(', ') }}</span>{% if cfg.is_default %} and every domain without a mapping{% endif %}.
+    {% elif cfg.is_default %}
+      Sends for every domain without a mapping.
+    {% else %}
+      <span class="error">No domains are mapped to this app yet, so nothing is sent through it.</span>
+    {% endif %}
+    <a href="/config/domains">Manage domains</a>
+  </p>
   <p class="small muted">
     The relay uses the OAuth 2.0 Client Credentials Grant to call
     <code>POST /users/{sender}/sendMail</code> on Microsoft Graph.
@@ -15,7 +30,12 @@
   </p>
 
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
-  {% if request.query_params.get('saved') %}
+  {% if request.query_params.get('created') %}
+    <p class="flash flash-info">
+      Enterprise app created. Enter its tenant and credentials, run
+      “Test connection”, then map its domains on the Domains page.
+    </p>
+  {% elif request.query_params.get('saved') %}
     <p class="flash flash-info">Saved. Run “Test connection” to verify.</p>
   {% elif request.query_params.get('tested') %}
     <p class="flash flash-{{ 'info' if cfg and cfg.last_test_ok else 'warn' }}">
@@ -54,8 +74,13 @@
     {% endif %}
   {% endif %}
 
-  <form method="post" action="/config/tenant" autocomplete="off">
+  <form method="post" action="/config/tenant/{{ cfg.id }}" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <label>
+      Name
+      <input type="text" name="name" required maxlength="128" value="{{ cfg.name }}">
+    </label>
 
     <label>
       Tenant ID
@@ -163,7 +188,7 @@
       <tr><th>Expires</th><td>{{ cfg.cert_not_after }}</td></tr>
       <tr><th>Created</th><td>{{ cfg.cert_created_at|dt if cfg.cert_created_at else "—" }}</td></tr>
     </table>
-    <p><a class="btn" href="/config/tenant/cert/active.cer">Download .cer</a></p>
+    <p><a class="btn" href="/config/tenant/{{ cfg.id }}/cert/active.cer">Download .cer</a></p>
   {% else %}
     <p class="small muted">No certificate has been generated yet.</p>
   {% endif %}
@@ -183,12 +208,12 @@
       <tr><th>Created</th><td>{{ cfg.cert_pending_created_at|dt if cfg.cert_pending_created_at else "—" }}</td></tr>
     </table>
     <div class="row-actions">
-      <a class="btn" href="/config/tenant/cert/pending.cer">Download .cer</a>
-      <form method="post" action="/config/tenant/cert/activate" style="display:inline">
+      <a class="btn" href="/config/tenant/{{ cfg.id }}/cert/pending.cer">Download .cer</a>
+      <form method="post" action="/config/tenant/{{ cfg.id }}/cert/activate" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn btn-primary">Activate</button>
       </form>
-      <form method="post" action="/config/tenant/cert/discard" style="display:inline">
+      <form method="post" action="/config/tenant/{{ cfg.id }}/cert/discard" style="display:inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn btn-danger">Discard</button>
       </form>
@@ -201,7 +226,7 @@
     Generating stages a new certificate without touching the live one, so it
     never interrupts sending. Complete the upload + activate steps to switch.
   </p>
-  <form method="post" action="/config/tenant/cert/generate">
+  <form method="post" action="/config/tenant/{{ cfg.id }}/cert/generate">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>
       Validity
@@ -242,9 +267,25 @@
     <tr><th>Token expires</th><td>{{ cfg.last_token_expires_at|dt if cfg else "—" }}</td></tr>
   </table>
 
-  <form method="post" action="/config/tenant/test">
+  <form method="post" action="/config/tenant/{{ cfg.id }}/test">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button type="submit" class="btn">Test connection</button>
   </form>
 </section>
+
+{% if not cfg.is_default %}
+<section class="card card-danger">
+  <h2>Delete enterprise app</h2>
+  <p class="small muted">
+    Only possible once no domain is mapped to it, no SMTP account is limited
+    to it and no queued mail is waiting to be sent through it. Its secret and
+    certificate are deleted with it.
+  </p>
+  <form method="post" action="/config/tenant/{{ cfg.id }}/delete"
+        data-confirm="Delete enterprise app {{ cfg.name }}? Its credentials are deleted too.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="btn btn-danger">Delete</button>
+  </form>
+</section>
+{% endif %}
 {% endblock %}

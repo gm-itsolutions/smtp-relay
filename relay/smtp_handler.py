@@ -55,6 +55,7 @@ class CaseInsensitiveAuthSMTP(SMTP):
 from common.audit import record as audit_record
 from common.db import session_scope
 from common.models import AuditEventType, AuditOutcome
+from common.routing import account_may_use_app, resolve_route
 
 from .auth import (
     ip_or_user_banned,
@@ -218,7 +219,40 @@ class RelayHandler:
                 )
             return "550 5.7.1 Sender not authorized"
 
+        # Pick the enterprise app now, so a sender that cannot be routed (or
+        # an account sending through an app it is not allowed to use) gets a
+        # clear SMTP error instead of a mail that dies in the queue.
+        async with session_scope() as s:
+            route = await resolve_route(s, address)
+            refusal: str | None = None
+            if not route.ok:
+                refusal = (
+                    "sender domain not mapped to an enterprise app"
+                    if route.via == "unmapped"
+                    else "no default enterprise app configured"
+                )
+            elif not await account_may_use_app(s, username, route.app.id):
+                refusal = "account not allowed to use this enterprise app"
+            if refusal:
+                await audit_record(
+                    s,
+                    event_type=AuditEventType.SMTP_RELAY_FAIL,
+                    outcome=AuditOutcome.FAILURE,
+                    source_ip=ip,
+                    username=username,
+                    details={
+                        "reason": refusal,
+                        "sender": address,
+                        "app_id": route.app.id if route.app else None,
+                    },
+                )
+                return "550 5.7.1 Sender not authorized"
+            app_id = route.app.id
+
         envelope.mail_from = address
+        # Read back in handle_DATA. aiosmtpd builds a fresh Envelope for
+        # every transaction (and on RSET), so this never leaks across mails.
+        envelope.relay_app_id = app_id
         envelope.mail_options.extend(mail_options)
         return "250 OK"
 
@@ -295,6 +329,7 @@ class RelayHandler:
                 sender=envelope.mail_from,
                 recipients=list(envelope.rcpt_tos),
                 raw_mime=raw,
+                app_id=getattr(envelope, "relay_app_id", None),
                 source_ip=ip,
                 source_username=username,
             )

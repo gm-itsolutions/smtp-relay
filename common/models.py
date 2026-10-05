@@ -21,6 +21,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     Enum as SAEnum,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -139,8 +140,36 @@ class SmtpAccount(Base):
     allowed_cidrs: Mapped[str] = mapped_column(Text, nullable=False, default="")
     description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # When True the account may only send through the enterprise apps listed
+    # in `smtp_account_apps`; an empty list then allows none (fail closed).
+    # When False (default) every enterprise app is allowed.
+    restrict_apps: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     created_at: Mapped[_dt.datetime] = mapped_column(
         DateTime, nullable=False, default=_utcnow
+    )
+
+
+class SmtpAccountApp(Base):
+    """Enterprise apps an SMTP account with `restrict_apps` may send through.
+
+    The app foreign key is RESTRICT on purpose: deleting an app that an
+    account is limited to must not silently drop the restriction.
+    """
+
+    __tablename__ = "smtp_account_apps"
+
+    smtp_account_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("smtp_accounts.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tenant_config_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("tenant_config.id", ondelete="RESTRICT"),
+        primary_key=True,
+        index=True,
     )
 
 
@@ -178,13 +207,30 @@ class AuthorisedSender(Base):
 
 
 # =============================================================================
-# Tenant (Entra ID) configuration — single row, pk=1
+# Enterprise apps (Entra ID app registrations) — one row per app
 # =============================================================================
 
 class TenantConfig(Base):
+    """One Entra ID app registration the relay can send through.
+
+    Several rows may exist (e.g. one per Microsoft 365 tenant). Mail is
+    routed to an app by the sender's domain (`SenderDomain`); exactly one
+    row is the default, which handles every domain without a mapping.
+    """
+
     __tablename__ = "tenant_config"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # Operator-facing label, e.g. the branch or company the tenant belongs to.
+    name: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="Default", server_default="Default"
+    )
+    # Exactly one app is the default. Enforced by the code that changes it
+    # (UI "make default", bootstrap self-heal), not by a DB constraint.
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
     tenant_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     client_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -285,6 +331,29 @@ class TenantConfig(Base):
 
 
 # =============================================================================
+# Sender domains — routes a sender's domain to an enterprise app
+# =============================================================================
+
+class SenderDomain(Base):
+    __tablename__ = "sender_domains"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Lowercase ASCII (punycode) domain, matched exactly against the part of
+    # the envelope sender after the '@'.
+    domain: Mapped[str] = mapped_column(String(253), unique=True, nullable=False)
+    tenant_config_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("tenant_config.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[_dt.datetime] = mapped_column(
+        DateTime, nullable=False, default=_utcnow
+    )
+
+
+# =============================================================================
 # Global settings — single row, pk=1
 # =============================================================================
 
@@ -309,6 +378,12 @@ class Settings(Base):
     # only relaxes the From: address allow-list.
     smtp_sender_check_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True
+    )
+
+    # Sender domains without a SenderDomain mapping normally go through the
+    # default enterprise app. When True they are refused at MAIL FROM.
+    reject_unmapped_domains: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
     )
 
     # SMTP ban policy.
@@ -469,6 +544,16 @@ class MailQueue(Base):
     # Populated when status becomes SENT so the UI can link to the file.
     archive_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
 
+    # Enterprise app the mail is sent through. Chosen at MAIL FROM; NULL for
+    # rows queued without one (admin alerts, rows from before multi-app
+    # support), which are routed by sender domain when they are sent.
+    tenant_config_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("tenant_config.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Which SMTP account or IP submitted the mail (for audit correlation).
     source_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
     source_username: Mapped[Optional[str]] = mapped_column(
@@ -602,9 +687,11 @@ __all__ = [
     "Base",
     "User",
     "SmtpAccount",
+    "SmtpAccountApp",
     "IpWhitelistEntry",
     "AuthorisedSender",
     "TenantConfig",
+    "SenderDomain",
     "Settings",
     "MailQueue",
     "MailStatus",

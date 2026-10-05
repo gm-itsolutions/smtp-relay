@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Domains — Config{% endblock %}
+{% block content %}
+<h1>Configuration</h1>
+{% with active='domains' %}{% include "_confignav.html" %}{% endwith %}
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if request.query_params.get('saved') %}
+  <p class="flash flash-info">Routing saved.</p>
+{% endif %}
+
+<section class="card">
+  <h2>Default enterprise app</h2>
+  <p class="small muted">
+    Mail from a domain that is not in the table below goes through the
+    default app. An app can only send as mailboxes of its own Microsoft 365
+    tenant, so map every domain that belongs to another tenant.
+  </p>
+  <form method="post" action="/config/domains/routing">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      Default app (all unmapped domains)
+      <select name="default_app_id">
+        {% for a in apps %}
+          <option value="{{ a.id }}" {{ 'selected' if a.is_default else '' }}>{{ a.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="check">
+      <input type="checkbox" name="reject_unmapped" value="1" {{ 'checked' if reject_unmapped else '' }}>
+      Refuse senders whose domain is not mapped (instead of using the default app)
+    </label>
+    <div class="row-actions">
+      <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+  </form>
+
+  {% if unmapped_in_use %}
+    {% if reject_unmapped %}
+      <p class="alert alert-err">
+        These domains are in use (authorised senders or the alert sender) but
+        not mapped, so their mail is <strong>refused</strong>:
+        <span class="mono">{{ unmapped_in_use|join(', ') }}</span>
+      </p>
+    {% else %}
+      <p class="small">
+        In use but not mapped, so sent through
+        <strong>{{ default_app.name if default_app else '—' }}</strong>:
+        <span class="mono">{{ unmapped_in_use|join(', ') }}</span>
+      </p>
+    {% endif %}
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Domain → enterprise app</h2>
+
+  <form method="post" action="/config/domains" class="inline-form" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="text" name="domain" placeholder="contoso.com" required maxlength="253">
+    <select name="app_id">
+      {% for a in apps %}
+        <option value="{{ a.id }}" {{ 'selected' if a.is_default else '' }}>{{ a.name }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="description" placeholder="Description (optional)" maxlength="255">
+    <button type="submit" class="btn btn-primary">Add</button>
+  </form>
+
+  {% if rows %}
+  <table class="data">
+    <thead>
+      <tr><th>Domain</th><th>Enterprise app</th><th>Description</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="mono">{{ r.domain }}</td>
+        <td colspan="2">
+          <form method="post" action="/config/domains/{{ r.id }}" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <select name="app_id" aria-label="Enterprise app for {{ r.domain }}">
+              {% for a in apps %}
+                <option value="{{ a.id }}" {{ 'selected' if a.id == r.tenant_config_id else '' }}>{{ a.name }}</option>
+              {% endfor %}
+            </select>
+            <input type="text" name="description" value="{{ r.description or '' }}"
+                   maxlength="255" aria-label="Description for {{ r.domain }}">
+            <button type="submit" class="btn btn-small">Save</button>
+          </form>
+        </td>
+        <td class="row-actions">
+          <form method="post" action="/config/domains/{{ r.id }}/delete"
+                data-confirm="Remove the mapping for {{ r.domain }}? Its mail will then go through the default app{{ ' (or be refused)' if reject_unmapped else '' }}.">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-small btn-danger">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No domains mapped: every sender goes through the default app.</p>
+  {% endif %}
+</section>
+{% endblock %}

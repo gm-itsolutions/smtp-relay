@@ -1,0 +1,26 @@
+{# Enterprise-app restriction for an SMTP account form.
+   Expects: apps, restricted (bool), selected_ids (set of app ids).
+   Hidden while there is a single app and no restriction to edit. #}
+{% if apps|length > 1 or restricted %}
+<fieldset>
+  <legend>Enterprise apps</legend>
+  <label class="check">
+    <input type="radio" name="app_scope" value="all" {{ '' if restricted else 'checked' }}>
+    All enterprise apps
+  </label>
+  <label class="check">
+    <input type="radio" name="app_scope" value="selected" {{ 'checked' if restricted else '' }}>
+    Only the apps selected below
+  </label>
+  {% for a in apps %}
+  <label class="check">
+    <input type="checkbox" name="app_ids" value="{{ a.id }}" {{ 'checked' if a.id in selected_ids else '' }}>
+    {{ a.name }}
+  </label>
+  {% endfor %}
+  <span class="small">
+    Mail from this account is refused if its sender domain routes to an app
+    not allowed here. Clients let in by the IP whitelist are not limited.
+  </span>
+</fieldset>
+{% endif %}

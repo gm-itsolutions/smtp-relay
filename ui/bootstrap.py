@@ -33,10 +33,10 @@ from common.models import (
     AuditEventType,
     AuditOutcome,
     Settings,
-    TenantConfig,
     User,
 )
 from common.passwords import hash_password
+from common.routing import ensure_default_app
 
 from .config import get_settings
 
@@ -52,9 +52,7 @@ async def _ensure_singleton_rows() -> None:
         settings = await session.scalar(select(Settings).where(Settings.id == 1))
         if settings is None:
             session.add(Settings(id=1))
-        cfg = await session.scalar(select(TenantConfig).where(TenantConfig.id == 1))
-        if cfg is None:
-            session.add(TenantConfig(id=1))
+        await ensure_default_app(session)
 
 
 async def _ensure_admin_user() -> None:

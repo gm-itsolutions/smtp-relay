@@ -29,6 +29,7 @@ from common.models import (
     AuditOutcome,
     MailQueue,
     MailStatus,
+    TenantConfig,
 )
 
 from .helpers import audit_config_change, recipients_by_field
@@ -125,6 +126,11 @@ async def detail_view(
             raw = base64.b64decode(row.raw_mime_b64.encode("ascii"))
         except Exception:
             raw = b""
+        app = (
+            await s.get(TenantConfig, row.tenant_config_id)
+            if row.tenant_config_id is not None
+            else None
+        )
 
     headers, body_preview, body_truncated = _split_eml_for_display(raw)
     try:
@@ -140,6 +146,7 @@ async def detail_view(
             "row": row,
             "recipients": recipients,
             "grouped": recipients_by_field(raw, recipients),
+            "app": app,
             "headers": headers,
             "body_preview": body_preview,
             "body_truncated": body_truncated,
