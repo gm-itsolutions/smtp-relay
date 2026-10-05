@@ -67,6 +67,17 @@ def _first_error(exc: ValidationError) -> str:
         return "Invalid input."
 
 
+def _app_url(app_id: int, flag: str | None = None) -> str:
+    """Path of an app's page, optionally with a `?<flag>=1` notice.
+
+    app_id is already an int (FastAPI path converter), but the explicit
+    cast makes the integer type visible to static analysers so they don't
+    flag the redirect as an open-redirect risk.
+    """
+    path = f"/config/tenant/{int(app_id)}"
+    return f"{path}?{flag}=1" if flag else path
+
+
 async def _load_app(app_id: int) -> TenantConfig:
     async with session_scope() as s:
         cfg = await s.get(TenantConfig, app_id)
@@ -160,7 +171,7 @@ async def app_create(
             await _apps_context(session, error=error),
             status_code=400,
         )
-    return RedirectResponse(f"/config/tenant/{app_id}?created=1", status_code=303)
+    return RedirectResponse(_app_url(app_id, "created"), status_code=303)
 
 
 # =============================================================================
@@ -311,7 +322,7 @@ async def app_save(
             )
     if error:
         return await _render_app_error(request, session, app_id, error)
-    return RedirectResponse(f"/config/tenant/{app_id}?saved=1", status_code=303)
+    return RedirectResponse(_app_url(app_id, "saved"), status_code=303)
 
 
 @router.post(
@@ -371,7 +382,7 @@ async def app_test(
                 "error": None if ok else err,
             },
         )
-    return RedirectResponse(f"/config/tenant/{app_id}?tested=1", status_code=303)
+    return RedirectResponse(_app_url(app_id, "tested"), status_code=303)
 
 
 @router.post(
@@ -495,7 +506,7 @@ async def app_cert_generate(
             },
         )
     return RedirectResponse(
-        f"/config/tenant/{app_id}?cert_generated=1", status_code=303
+        _app_url(app_id, "cert_generated"), status_code=303
     )
 
 
@@ -552,7 +563,7 @@ async def app_cert_activate(
             request, session, app_id, "There is no pending certificate to activate."
         )
     return RedirectResponse(
-        f"/config/tenant/{app_id}?cert_activated=1", status_code=303
+        _app_url(app_id, "cert_activated"), status_code=303
     )
 
 
@@ -571,7 +582,7 @@ async def app_cert_discard(
         if cfg is None:
             raise HTTPException(status_code=404)
         if not cfg.cert_pending_thumbprint:
-            return RedirectResponse(f"/config/tenant/{app_id}", status_code=303)
+            return RedirectResponse(_app_url(app_id), status_code=303)
         thumbprint = cfg.cert_pending_thumbprint
         cfg.cert_pending_private_key_enc = None
         cfg.cert_pending_public_pem = None
@@ -589,7 +600,7 @@ async def app_cert_discard(
             },
         )
     return RedirectResponse(
-        f"/config/tenant/{app_id}?cert_discarded=1", status_code=303
+        _app_url(app_id, "cert_discarded"), status_code=303
     )
 
 
