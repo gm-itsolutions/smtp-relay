@@ -1,6 +1,6 @@
 # Keep the digest-pinned base images up to date automatically.
 # Dependabot opens a PR whenever a new digest is published for the pinned tags
-# in each Dockerfile; the docker-publish workflow then rebuilds and republishes.
+# in each Dockerfile, plus pip updates for both services. CI runs the tests.
 version: 2
 updates:
   - package-ecosystem: "docker"
@@ -27,3 +27,14 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+  - package-ecosystem: "pip"
+    directories:
+      - "/relay"
+      - "/ui"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "build(deps)"

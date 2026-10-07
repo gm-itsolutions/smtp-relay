@@ -57,6 +57,29 @@ def _configure_logging() -> None:
         level=level,
     )
     # aiosmtpd is chatty at DEBUG; keep it at the user-requested level.
+    # (It masks AUTH arguments itself: ">> b'AUTH PLAIN ********'".)
+
+
+def _tls_kwargs() -> dict:
+    """Optional STARTTLS for the SMTP listener.
+
+    SMTP_TLS_CERT / SMTP_TLS_KEY: PEM files; when set, STARTTLS is offered.
+    SMTP_AUTH_REQUIRE_TLS=1: refuse AUTH before STARTTLS (plain-text
+    passwords never cross the LAN). Off by default because many printers
+    cannot do STARTTLS.
+    """
+    import ssl
+
+    cert = os.environ.get("SMTP_TLS_CERT", "").strip()
+    key = os.environ.get("SMTP_TLS_KEY", "").strip()
+    require = os.environ.get("SMTP_AUTH_REQUIRE_TLS", "0") == "1"
+    if not (cert and key):
+        if require:
+            raise RuntimeError("SMTP_AUTH_REQUIRE_TLS=1 needs SMTP_TLS_CERT and SMTP_TLS_KEY.")
+        return {"auth_require_tls": False}
+    ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ctx.load_cert_chain(cert, key)
+    return {"tls_context": ctx, "auth_require_tls": require}
 
 
 # -----------------------------------------------------------------------------
@@ -274,7 +297,9 @@ async def _run() -> None:
         port=controller_kwargs["port"],
         authenticator=authenticator,
         auth_required=False,  # whitelisted IPs skip AUTH; we gate in handlers
-        auth_require_tls=False,  # caller-facing TLS is optional on internal LAN
+        # Reject oversized DATA while reading, not after buffering it all.
+        data_size_limit=controller_kwargs["max_size"],
+        **_tls_kwargs(),
     )
     controller.start()
     _log.info(

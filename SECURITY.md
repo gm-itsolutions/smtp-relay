@@ -2,16 +2,11 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability, please **do not open a public issue**.
-
-Instead, use GitHub's private disclosure mechanism:
-
-👉 [Report a vulnerability](https://github.com/nicolafilippetto/smtp-relay/security/advisories/new)
-
-This keeps the details private until a fix is available.
-
-There are no formal SLAs or response time guarantees — this is a personal open
-source project maintained on a best-effort basis.
+This is the GM IT Solutions fork. Report vulnerabilities in this fork via a
+private GitHub security advisory on `gm-itsolutions/smtp-relay`, or directly
+to GM IT Solutions. Issues that also affect the original project are reported
+upstream as well:
+[nicolafilippetto/smtp-relay advisories](https://github.com/nicolafilippetto/smtp-relay/security/advisories/new).
 
 ---
 

@@ -1,7 +1,11 @@
 services:
 
   ui:
-    image: ghcr.io/nicolafilippetto/smtp-relay/ui:latest
+    # Built locally from this checkout (no third-party registry, no :latest).
+    build:
+      context: .
+      dockerfile: ./ui/Dockerfile
+    image: gm-smtp-relay/ui:local
     container_name: smtp-relay-ui
     restart: unless-stopped
     expose:
@@ -38,7 +42,11 @@ services:
       - relay-internal
 
   relay:
-    image: ghcr.io/nicolafilippetto/smtp-relay/relay:latest
+    # Built locally from this checkout (no third-party registry, no :latest).
+    build:
+      context: .
+      dockerfile: ./relay/Dockerfile
+    image: gm-smtp-relay/relay:local
     container_name: smtp-relay-smtp
     restart: unless-stopped
     ports:
@@ -51,10 +59,19 @@ services:
       SMTP_LISTEN_PORT: "2525"
       SMTP_MAX_MESSAGE_SIZE: ${SMTP_MAX_MESSAGE_SIZE:-31457280}
       SMTP_MAX_RECIPIENTS: ${SMTP_MAX_RECIPIENTS:-100}
+      # 0 = keep no copy of delivered mail (see README, data protection).
+      ARCHIVE_ENABLED: ${ARCHIVE_ENABLED:-1}
+      # Optional STARTTLS: mount PEM files via ./smtp-tls (see below).
+      SMTP_TLS_CERT: ${SMTP_TLS_CERT:-}
+      SMTP_TLS_KEY: ${SMTP_TLS_KEY:-}
+      SMTP_AUTH_REQUIRE_TLS: ${SMTP_AUTH_REQUIRE_TLS:-0}
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - data:/data
+      # STARTTLS: uncomment and set SMTP_TLS_CERT=/tls/cert.pem,
+      # SMTP_TLS_KEY=/tls/key.pem in .env (files readable by uid 1000).
+      # - ./smtp-tls:/tls:ro
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -65,11 +82,20 @@ services:
       - no-new-privileges:true
     depends_on:
       - ui
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 2525), 3)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
     networks:
       - relay-internal
 
   nginx:
-    image: ghcr.io/nicolafilippetto/smtp-relay/nginx:latest
+    # Built locally from this checkout (no third-party registry, no :latest).
+    build:
+      context: .
+      dockerfile: ./nginx/Dockerfile
+    image: gm-smtp-relay/nginx:local
     container_name: smtp-relay-nginx
     restart: unless-stopped
     ports:

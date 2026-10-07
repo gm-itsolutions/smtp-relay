@@ -3,10 +3,11 @@
 Sessions are stored as a serialised, HMAC-signed payload in a single
 cookie. `itsdangerous.URLSafeTimedSerializer` handles expiry by
 rejecting tokens older than `max_age`. No server-side session store is
-needed; revocation is achieved by bumping `SECRET_KEY` or by marking
-the user's TOTP unenrolled (which forces a re-login).
+needed for the payload itself; `require_user` re-checks the user row on
+every request (active flag + `session_version`), so bumping
+`User.session_version` revokes every outstanding cookie.
 
-CSRF tokens are independent HMAC strings bound to the user id. A POST
+CSRF tokens are double-submit HMAC strings bound to SECRET_KEY. A POST
 handler must validate the submitted token via `require_csrf`.
 """
 
@@ -53,6 +54,8 @@ class SessionPayload:
     username: str
     # True once the user has passed both password and TOTP challenges.
     totp_passed: bool = False
+    # Must equal User.session_version, see require_user.
+    session_version: int = 0
 
 
 def encode_session(payload: SessionPayload) -> str:
@@ -61,6 +64,7 @@ def encode_session(payload: SessionPayload) -> str:
             "uid": payload.user_id,
             "un": payload.username,
             "t": 1 if payload.totp_passed else 0,
+            "sv": payload.session_version,
         }
     )
 
@@ -80,6 +84,7 @@ def decode_session(token: str) -> Optional[SessionPayload]:
             user_id=int(data["uid"]),
             username=str(data["un"]),
             totp_passed=bool(data.get("t", 0)),
+            session_version=int(data.get("sv", -1)),
         )
     except (KeyError, ValueError, TypeError):
         return None
@@ -165,10 +170,35 @@ async def current_session(
     return decode_session(session_cookie or "")
 
 
+async def session_is_current(payload: SessionPayload) -> tuple[bool, bool]:
+    """(valid, must_change_password) for a decoded session, checked against the DB."""
+    from common.db import session_scope
+    from common.models import User
+
+    async with session_scope() as s:
+        user = await s.get(User, payload.user_id)
+        if (
+            user is None
+            or not user.is_active
+            or user.session_version != payload.session_version
+        ):
+            return False, False
+        return True, bool(user.must_change_password)
+
+
 async def require_user(
+    request: Request,
     session_cookie: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> SessionPayload:
     payload = decode_session(session_cookie or "")
     if payload is None or not payload.totp_passed:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+    valid, must_change = await session_is_current(payload)
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+    if must_change and request.url.path not in ("/account/password", "/logout"):
+        raise HTTPException(
+            status_code=status.HTTP_303_SEE_OTHER,
+            headers={"Location": "/account/password"},
+        )
     return payload

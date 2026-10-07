@@ -50,16 +50,27 @@ def _sanitise(subject: str | None, max_len: int = 48) -> str:
     return (cleaned or "nosubject")[:max_len]
 
 
+def archive_enabled() -> bool:
+    """ARCHIVE_ENABLED=0 keeps no copy of delivered mail (data minimisation).
+
+    Deliberately an environment variable, not a UI setting: a compromised UI
+    account can neither switch evidence keeping off nor on.
+    """
+    return os.environ.get("ARCHIVE_ENABLED", "1") != "0"
+
+
 def write_eml(
     *,
     message_id: int,
     subject: str | None,
     raw_mime: bytes,
     when: _dt.datetime | None = None,
-) -> Path:
-    """Persist a raw MIME message to the archive. Returns the path."""
+) -> Path | None:
+    """Persist a raw MIME message to the archive. Returns the path (None if disabled)."""
     if not isinstance(raw_mime, (bytes, bytearray)):
         raise TypeError("raw_mime must be bytes")
+    if not archive_enabled():
+        return None
 
     stamp = when or _dt.datetime.now(_dt.timezone.utc)
     day_dir = _archive_root() / f"{stamp.year:04d}" / f"{stamp.month:02d}" / f"{stamp.day:02d}"

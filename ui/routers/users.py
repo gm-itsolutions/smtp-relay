@@ -130,6 +130,7 @@ async def toggle(
                     error="Refusing to disable the last active user.",
                 )
         user.is_active = not user.is_active
+        user.session_version += 1
         await audit_config_change(
             s, session, request,
             details={
@@ -168,6 +169,7 @@ async def reset_password(
             raise HTTPException(status_code=404)
         user.password_hash = hash_password(new_password)
         user.must_change_password = True
+        user.session_version += 1
         await audit_config_change(
             s, session, request,
             details={
@@ -199,6 +201,7 @@ async def reset_totp(
             raise HTTPException(status_code=404)
         user.totp_secret = None
         user.totp_enrolled_at = None
+        user.session_version += 1
         await audit_config_change(
             s, session, request,
             details={
@@ -296,6 +299,7 @@ async def account_reset_totp(
             raise HTTPException(status_code=404)
         user.totp_secret = None
         user.totp_enrolled_at = None
+        user.session_version += 1
         await audit_config_change(
             s, session, request,
             details={

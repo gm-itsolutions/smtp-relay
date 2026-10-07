@@ -303,7 +303,10 @@ async def login_submit(
         # Password OK. Issue a partially-authenticated session cookie.
         assert user is not None
         payload = SessionPayload(
-            user_id=user.id, username=user.username, totp_passed=False
+            user_id=user.id,
+            username=user.username,
+            totp_passed=False,
+            session_version=user.session_version,
         )
 
     # Decide redirect target.
@@ -312,7 +315,7 @@ async def login_submit(
     # (including /account/password) would redirect back to /login and
     # create a loop. Only after the TOTP challenge do we honor
     # must_change_password.
-    if user.totp_secret is None:
+    if user.totp_enrolled_at is None:
         target = "/login/totp/enrol"
     else:
         target = "/login/totp"
@@ -337,8 +340,12 @@ async def totp_enrol_form(
 
     async with session_scope() as s:
         user = await s.get(User, session.user_id)
-        if user is None:
+        if not _partial_session_ok(user, session):
             return RedirectResponse("/login", status_code=303)
+        if user.totp_enrolled_at is not None:
+            # Already enrolled: never show the stored secret again, otherwise
+            # the password alone would be enough to obtain a valid TOTP code.
+            return RedirectResponse("/login/totp", status_code=303)
         if user.totp_secret is None:
             plain = pyotp.random_base32()
             user.totp_secret = _encrypt_totp_secret(plain)
@@ -372,9 +379,14 @@ async def totp_enrol_submit(
     if session is None:
         return RedirectResponse("/login", status_code=303)
 
+    ip = _client_ip(request)
     async with session_scope() as s:
         user = await s.get(User, session.user_id)
-        if user is None or user.totp_secret is None:
+        if not _partial_session_ok(user, session) or user.totp_secret is None:
+            return RedirectResponse("/login", status_code=303)
+        if user.totp_enrolled_at is not None:
+            return RedirectResponse("/login/totp", status_code=303)
+        if await _ip_banned(s, ip):
             return RedirectResponse("/login", status_code=303)
         if not _verify_totp_consume(user, code):
             await audit_record(
@@ -382,9 +394,10 @@ async def totp_enrol_submit(
                 event_type=AuditEventType.TOTP_FAIL,
                 outcome=AuditOutcome.FAILURE,
                 username=user.username,
-                source_ip=_client_ip(request),
+                source_ip=ip,
                 details={"stage": "enrolment"},
             )
+            await _record_ui_failure(s, ip)
             import datetime as _dt
             # Reshow the form with the same QR (decrypt the stored secret).
             plain = _load_totp_secret(user.totp_secret)
@@ -405,14 +418,17 @@ async def totp_enrol_submit(
         import datetime as _dt
         user.totp_enrolled_at = _dt.datetime.utcnow()
         payload = SessionPayload(
-            user_id=user.id, username=user.username, totp_passed=True
+            user_id=user.id,
+            username=user.username,
+            totp_passed=True,
+            session_version=user.session_version,
         )
         await audit_record(
             s,
             event_type=AuditEventType.LOGIN_OK,
             outcome=AuditOutcome.SUCCESS,
             username=user.username,
-            source_ip=_client_ip(request),
+            source_ip=ip,
             details={"stage": "enrolment"},
         )
 
@@ -454,12 +470,20 @@ async def totp_submit(
         return RedirectResponse("/login", status_code=303)
 
     ip = _client_ip(request)
-    settings = get_settings()
 
     async with session_scope() as s:
         user = await s.get(User, session.user_id)
-        if user is None or user.totp_secret is None:
+        if not _partial_session_ok(user, session):
             return RedirectResponse("/login", status_code=303)
+        if user.totp_enrolled_at is None or user.totp_secret is None:
+            return RedirectResponse("/login/totp/enrol", status_code=303)
+        if await _ip_banned(s, ip):
+            return render(
+                request,
+                "totp.html",
+                {"error": "Too many failed attempts. Try again later."},
+                status_code=429,
+            )
 
         valid = _verify_totp_consume(user, code)
         if not valid:
@@ -470,16 +494,7 @@ async def totp_submit(
                 username=user.username,
                 source_ip=ip,
             )
-            if ip:
-                await record_failure(
-                    s,
-                    kind=BanKind.UI,
-                    scope=BanScope.IP,
-                    value=ip,
-                    source_ip=ip,
-                    threshold=settings.ui_login_ban_threshold,
-                    duration_min=settings.ui_login_ban_duration_min,
-                )
+            await _record_ui_failure(s, ip)
             return render(
                 request,
                 "totp.html",
@@ -488,7 +503,10 @@ async def totp_submit(
             )
 
         payload = SessionPayload(
-            user_id=user.id, username=user.username, totp_passed=True
+            user_id=user.id,
+            username=user.username,
+            totp_passed=True,
+            session_version=user.session_version,
         )
         await audit_record(
             s,
@@ -515,6 +533,9 @@ async def logout(
     session: SessionPayload = Depends(require_user),
 ):
     async with session_scope() as s:
+        user = await s.get(User, session.user_id)
+        if user is not None:
+            user.session_version += 1
         await audit_record(
             s,
             event_type=AuditEventType.LOGIN_OK,
@@ -582,6 +603,13 @@ async def password_submit(
         was_forced_change = user.must_change_password
         user.password_hash = hash_password(new_password)
         user.must_change_password = False
+        user.session_version += 1
+        payload = SessionPayload(
+            user_id=user.id,
+            username=user.username,
+            totp_passed=True,
+            session_version=user.session_version,
+        )
         # NB: kept as raw audit_record because _client_ip() respects the
         # X-Forwarded-For header (via slowapi.get_remote_address), while
         # audit_config_change() always uses request.client.host directly.
@@ -597,14 +625,43 @@ async def password_submit(
         )
     # After the forced first-login change, land on the dashboard; for a
     # voluntary change from the account page, stay there with a confirmation.
-    if was_forced_change:
-        return RedirectResponse("/dashboard", status_code=303)
-    return RedirectResponse("/account?saved=1", status_code=303)
+    target = "/dashboard" if was_forced_change else "/account?saved=1"
+    response = RedirectResponse(target, status_code=303)
+    _set_session_cookies(response, payload)
+    return response
 
 
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
+
+def _partial_session_ok(user: User | None, session: SessionPayload) -> bool:
+    """A (possibly not yet TOTP-passed) session still belongs to a live user."""
+    return (
+        user is not None
+        and user.is_active
+        and user.session_version == session.session_version
+    )
+
+
+async def _ip_banned(s, ip: str) -> bool:
+    return bool(ip) and await is_banned(s, kind=BanKind.UI, scope=BanScope.IP, value=ip)
+
+
+async def _record_ui_failure(s, ip: str) -> None:
+    if not ip:
+        return
+    settings = get_settings()
+    await record_failure(
+        s,
+        kind=BanKind.UI,
+        scope=BanScope.IP,
+        value=ip,
+        source_ip=ip,
+        threshold=settings.ui_login_ban_threshold,
+        duration_min=settings.ui_login_ban_duration_min,
+    )
+
 
 async def _user_must_change_password(user_id: int) -> bool:
     async with session_scope() as s:

@@ -125,6 +125,8 @@ def create_app() -> FastAPI:
     async def _http_exception(request: Request, exc: StarletteHTTPException):
         if exc.status_code == 401:
             return RedirectResponse("/login", status_code=303)
+        if exc.status_code == 303 and exc.headers and "Location" in exc.headers:
+            return RedirectResponse(exc.headers["Location"], status_code=303)
         if exc.status_code in (403, 404):
             return render(
                 request,

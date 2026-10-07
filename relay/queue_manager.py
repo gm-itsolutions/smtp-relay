@@ -393,7 +393,10 @@ class QueueWorker:
                         raw_mime=raw,
                         when=now,
                     )
-                    row.archive_path = str(path)
+                    row.archive_path = str(path) if path else None
+                    if path is None:
+                        # Archive disabled: drop the content once delivered.
+                        row.raw_mime_b64 = ""
                 except Exception as exc:
                     # The mail WAS delivered via Graph, so we must not
                     # retry (that would double-send). But the local
@@ -534,7 +537,11 @@ async def requeue_all_dead() -> int:
 
 
 async def prune_sent(retention_days: int) -> int:
-    """Delete SENT rows older than retention. DEAD rows are kept."""
+    """Delete SENT and DEAD rows older than retention.
+
+    DEAD rows hold the full message; keeping them forever would defeat the
+    retention setting. The daily admin digest reports them long before.
+    """
     if retention_days is None or retention_days < 1:
         retention_days = 30
     cutoff = _utcnow() - _dt.timedelta(days=retention_days)
@@ -543,7 +550,7 @@ async def prune_sent(retention_days: int) -> int:
     async with session_scope() as session:
         res = await session.execute(
             delete(MailQueue).where(
-                MailQueue.status == MailStatus.SENT,
+                MailQueue.status.in_((MailStatus.SENT, MailStatus.DEAD)),
                 MailQueue.timestamp_received < cutoff,
             )
         )

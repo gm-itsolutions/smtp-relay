@@ -239,6 +239,42 @@ async def is_sender_authorised(sender: str) -> bool:
     return row is not None
 
 
+def _parse_sender_list(text: str) -> set[str]:
+    return {a.strip().lower() for a in (text or "").replace(",", "\n").splitlines() if a.strip()}
+
+
+async def client_may_use_sender(
+    username: str | None, source_ip: str | None, sender: str
+) -> bool:
+    """Per-client sender binding on top of the global authorised-sender list.
+
+    Authenticated: the account's `allowed_senders` (empty = no extra limit).
+    Whitelisted: every enabled whitelist entry matching the IP; the sender is
+    allowed if any matching entry has no list or lists the sender.
+    """
+    norm = (sender or "").strip().lower()
+    async with session_scope() as session:
+        if username:
+            account = await session.scalar(
+                select(SmtpAccount).where(SmtpAccount.username == username)
+            )
+            if account is None:
+                return False
+            allowed = _parse_sender_list(account.allowed_senders)
+            return not allowed or norm in allowed
+        rows = (
+            await session.scalars(
+                select(IpWhitelistEntry).where(IpWhitelistEntry.is_enabled.is_(True))
+            )
+        ).all()
+    for row in rows:
+        if source_ip and ip_matches_any(source_ip, [row.cidr]):
+            allowed = _parse_sender_list(row.allowed_senders)
+            if not allowed or norm in allowed:
+                return True
+    return False
+
+
 def _parse_cidr_list(text: str) -> list[str]:
     """Split `text` (newline- and/or comma-separated CIDRs) into a list.
 

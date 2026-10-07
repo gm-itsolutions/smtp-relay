@@ -117,6 +117,11 @@ class User(Base):
     )
 
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Embedded in the session cookie and compared on every request. Bumping it
+    # (logout, password change, TOTP reset, disable) revokes all sessions.
+    session_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     created_at: Mapped[_dt.datetime] = mapped_column(
         DateTime, nullable=False, default=_utcnow
     )
@@ -138,6 +143,12 @@ class SmtpAccount(Base):
     # Newline- or comma-separated CIDRs the user may connect from.
     # Empty string = no restriction (any IP allowed with correct password).
     allowed_cidrs: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Newline- or comma-separated sender addresses this account may use as
+    # MAIL FROM (on top of the global authorised-sender list).
+    # Empty = every globally authorised sender.
+    allowed_senders: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )
     description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # When True the account may only send through the enterprise apps listed
@@ -183,6 +194,10 @@ class IpWhitelistEntry(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     # Stored as a CIDR string, e.g. "10.0.0.0/8" or "192.168.1.10/32".
     cidr: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    # Same semantics as SmtpAccount.allowed_senders.
+    allowed_senders: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )
     description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[_dt.datetime] = mapped_column(

@@ -33,6 +33,12 @@
       <span class="small">One CIDR per line, or comma-separated. Empty means any source IP is allowed with correct credentials.</span>
     </label>
     <label>
+      Allowed senders
+      <textarea name="allowed_senders" rows="3"
+                placeholder="printer-a@example.com">{{ row.allowed_senders or '' }}</textarea>
+      <span class="small">One address per line. MAIL FROM must be one of these (and on the authorised-sender list). Empty = any authorised sender.</span>
+    </label>
+    <label>
       Description
       <input type="text" name="description" value="{{ row.description or '' }}">
     </label>

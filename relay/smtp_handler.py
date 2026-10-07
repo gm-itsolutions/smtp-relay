@@ -58,6 +58,7 @@ from common.models import AuditEventType, AuditOutcome
 from common.routing import account_may_use_app, resolve_route
 
 from .auth import (
+    client_may_use_sender,
     ip_or_user_banned,
     is_ip_whitelisted,
     is_sender_authorised,
@@ -154,6 +155,24 @@ async def _async_auth_check(ip: str | None, username: str, password: str):
     return await verify_smtp_credentials(username, password, ip)
 
 
+def header_from_matches(raw: bytes, mail_from: str) -> bool:
+    """True iff the message has exactly one From address equal to MAIL FROM.
+
+    Graph sends as the envelope sender; a differing header From would let a
+    client show an arbitrary sender to the recipient.
+    """
+    from email.parser import BytesHeaderParser
+    from email.utils import getaddresses
+
+    try:
+        headers = BytesHeaderParser().parsebytes(raw)
+    except Exception:
+        return False
+    values = headers.get_all("From") or []
+    addrs = [a for _, a in getaddresses([str(v) for v in values]) if a]
+    return len(addrs) == 1 and addrs[0].strip().lower() == (mail_from or "").strip().lower()
+
+
 class RelayHandler:
     """aiosmtpd handler; one instance serves the lifetime of the process."""
 
@@ -207,7 +226,12 @@ class RelayHandler:
         if not username and not await is_ip_whitelisted(ip or ""):
             return "530 5.7.0 Authentication required"
 
+        refusal = None
         if not await is_sender_authorised(address):
+            refusal = "sender not authorised"
+        elif not await client_may_use_sender(username, ip, address):
+            refusal = "sender not allowed for this client"
+        if refusal:
             async with session_scope() as s:
                 await audit_record(
                     s,
@@ -215,7 +239,7 @@ class RelayHandler:
                     outcome=AuditOutcome.FAILURE,
                     source_ip=ip,
                     username=username,
-                    details={"reason": "sender not authorised", "sender": address},
+                    details={"reason": refusal, "sender": address},
                 )
             return "550 5.7.1 Sender not authorized"
 
@@ -296,6 +320,20 @@ class RelayHandler:
             return "554 5.5.1 No sender"
         if not envelope.rcpt_tos:
             return "554 5.5.1 No recipients"
+        if not header_from_matches(raw, envelope.mail_from):
+            async with session_scope() as s:
+                await audit_record(
+                    s,
+                    event_type=AuditEventType.SMTP_RELAY_FAIL,
+                    outcome=AuditOutcome.FAILURE,
+                    source_ip=ip,
+                    username=username,
+                    details={
+                        "reason": "header From differs from MAIL FROM",
+                        "sender": envelope.mail_from,
+                    },
+                )
+            return "550 5.7.1 Header From must match MAIL FROM"
 
         # Rate limit check: counts accepted DATAs in the sliding window.
         # If the cap is hit, refuse with 452 (temporary failure — well-

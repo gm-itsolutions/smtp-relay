@@ -271,10 +271,13 @@ async def whitelist_add(
     request: Request,
     cidr: str = Form(""),
     description: str = Form(""),
+    allowed_senders: str = Form(""),
     session: SessionPayload = Depends(require_user),
 ):
     try:
-        data: CidrIn = cidr_form(cidr=cidr, description=description)
+        data: CidrIn = cidr_form(
+            cidr=cidr, description=description, allowed_senders=allowed_senders
+        )
     except ValidationError as exc:
         async with session_scope() as s:
             rows = (await s.scalars(select(IpWhitelistEntry))).all()
@@ -293,13 +296,19 @@ async def whitelist_add(
             s.add(
                 IpWhitelistEntry(
                     cidr=data.cidr,
+                    allowed_senders=data.allowed_senders,
                     description=data.description or None,
                     is_enabled=True,
                 )
             )
             await audit_config_change(
                 s, session, request,
-                details={"section": "whitelist", "action": "add", "cidr": data.cidr},
+                details={
+                    "section": "whitelist",
+                    "action": "add",
+                    "cidr": data.cidr,
+                    "allowed_senders": data.allowed_senders.splitlines(),
+                },
             )
     return RedirectResponse("/config/whitelist", status_code=303)
 

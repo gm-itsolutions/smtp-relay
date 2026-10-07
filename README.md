@@ -2,6 +2,19 @@
 
 An on-premise SMTP relay that lets your applications and devices send email through Microsoft 365 **without needing SMTP AUTH**.
 
+> **GM IT Solutions fork** of [nicolafilippetto/smtp-relay](https://github.com/nicolafilippetto/smtp-relay) (v2.7.0, MIT). Changes, each covered by tests in `tests/`:
+>
+> - **TOTP bypass fixed:** `/login/totp/enrol` no longer re-displays an existing TOTP secret (upstream: password alone gave a full admin session).
+> - **TOTP brute force:** wrong codes count towards the UI IP ban, and the ban is enforced on the TOTP step.
+> - **Revocable sessions:** cookies carry `User.session_version`; logout, password change, TOTP reset and disabling a user revoke every session. `must_change_password` is enforced server-side.
+> - **Per-client sender binding:** SMTP accounts and whitelist entries have *Allowed senders*; a device can only use its own `MAIL FROM`.
+> - **Header From must equal MAIL FROM** (no display spoofing).
+> - **Whitelist width:** entries wider than `/24` (IPv6 `/64`) are refused.
+> - **Data minimisation:** `ARCHIVE_ENABLED=0` keeps no copy of delivered mail; DEAD queue rows are pruned with the sent-row retention.
+> - **SMTP hardening:** size limit enforced while reading DATA; optional STARTTLS (`SMTP_TLS_CERT`/`SMTP_TLS_KEY`, `SMTP_AUTH_REQUIRE_TLS`).
+> - **Deployment:** images are built locally from this checkout (no third-party registry, no `:latest`); relay healthcheck; Windows variant removed; Dependabot also for pip; CI runs the tests.
+> - **Entra:** use RBAC for Applications to scope `Mail.Send` to the device mailboxes (see below) instead of tenant-wide consent.
+
 ---
 
 ## Why does this project exist?
@@ -16,7 +29,7 @@ This project solves the problem cleanly: instead of connecting to Office 365 ove
 
 ## How it works
 
-Three Docker containers, built and published automatically via GitHub Actions:
+Three Docker containers, built locally from this repository:
 
 | Service | Role |
 |---------|------|
@@ -26,162 +39,20 @@ Three Docker containers, built and published automatically via GitHub Actions:
 
 All persistent data lives in Docker volumes — upgrades never touch your data.
 
-> **Prefer not to run Docker on Windows?** There is now a **native Windows
-> installer** that runs the relay and the admin panel as Windows background
-> services — no Docker required. See [Native Windows install](#native-windows-install).
-
 ---
 
 ## Quick start
 
-You only need two files on your server. No git clone, no build.
-
-### 1. Create `docker-compose.yml`
-
-Create a file called `docker-compose.yml` and paste this content:
-
-```yaml
-services:
-
-  ui:
-    image: ghcr.io/nicolafilippetto/smtp-relay/ui:latest
-    container_name: smtp-relay-ui
-    restart: unless-stopped
-    expose:
-      - "8000"
-    environment:
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
-      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
-      DATABASE_URL: "sqlite+aiosqlite:////data/relay.db"
-      ARCHIVE_PATH: "/data/archive"
-      SESSION_LIFETIME_HOURS: ${SESSION_LIFETIME_HOURS:-8}
-      UI_LOGIN_BAN_THRESHOLD: ${UI_LOGIN_BAN_THRESHOLD:-5}
-      UI_LOGIN_BAN_DURATION_MIN: ${UI_LOGIN_BAN_DURATION_MIN:-30}
-      ADMIN_RESET: ${ADMIN_RESET:-0}
-      ADMIN_NEW_PASSWORD: ${ADMIN_NEW_PASSWORD:-}
-      APP_NAME: ${APP_NAME:-SMTP Relay}
-      PYTHONUNBUFFERED: "1"
-      PYTHONDONTWRITEBYTECODE: "1"
-    volumes:
-      - data:/data
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,mode=1777
-      - /var/tmp:size=16m,mode=1777
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    networks:
-      - relay-internal
-
-  relay:
-    image: ghcr.io/nicolafilippetto/smtp-relay/relay:latest
-    container_name: smtp-relay-smtp
-    restart: unless-stopped
-    ports:
-      - "${SMTP_BIND_HOST:-0.0.0.0}:${SMTP_BIND_PORT:-2525}:2525"
-    environment:
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
-      DATABASE_URL: "sqlite+aiosqlite:////data/relay.db"
-      ARCHIVE_PATH: "/data/archive"
-      SMTP_LISTEN_HOST: "0.0.0.0"
-      SMTP_LISTEN_PORT: "2525"
-      SMTP_MAX_MESSAGE_SIZE: ${SMTP_MAX_MESSAGE_SIZE:-31457280}
-      PYTHONUNBUFFERED: "1"
-      PYTHONDONTWRITEBYTECODE: "1"
-    volumes:
-      - data:/data
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,mode=1777
-      - /var/tmp:size=16m,mode=1777
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    depends_on:
-      - ui
-    networks:
-      - relay-internal
-
-  nginx:
-    image: ghcr.io/nicolafilippetto/smtp-relay/nginx:latest
-    container_name: smtp-relay-nginx
-    restart: unless-stopped
-    ports:
-      - "${HTTP_BIND_HOST:-0.0.0.0}:${HTTP_PORT:-80}:8080"
-      - "${HTTPS_BIND_HOST:-0.0.0.0}:${HTTPS_PORT:-443}:8443"
-    volumes:
-      - certs:/etc/nginx/certs
-    read_only: true
-    tmpfs:
-      - /tmp:size=64m,mode=1777
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    depends_on:
-      - ui
-    networks:
-      - relay-internal
-
-volumes:
-  data:
-    name: smtp-relay-data
-  certs:
-    name: smtp-relay-certs
-
-networks:
-  relay-internal:
-    name: smtp-relay-internal
-    driver: bridge
-```
-
-### 2. Create `.env`
-
-In the same folder, create a file called `.env` and paste this content:
-
-```env
-# Generate with:
-#   python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-ENCRYPTION_KEY=
-
-# Generate with:
-#   python3 -c "import secrets; print(secrets.token_urlsafe(64))"
-SECRET_KEY=
-
-# Optional — defaults are shown
-APP_NAME=SMTP Relay
-SESSION_LIFETIME_HOURS=8
-UI_LOGIN_BAN_THRESHOLD=5
-UI_LOGIN_BAN_DURATION_MIN=30
-SMTP_BIND_HOST=0.0.0.0
-SMTP_BIND_PORT=2525
-HTTP_PORT=80
-HTTPS_PORT=443
-
-# Leave these empty in normal operation (see Admin password reset)
-ADMIN_RESET=0
-ADMIN_NEW_PASSWORD=
-```
-
-Generate the two required values and fill them in:
+On a Linux VM with Docker and the compose plugin:
 
 ```sh
-# ENCRYPTION_KEY
-python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-
-# SECRET_KEY
-python3 -c "import secrets; print(secrets.token_urlsafe(64))"
-```
-
-> **Keep `.env` safe and never commit it.** `ENCRYPTION_KEY` encrypts secrets stored in the database — losing it means losing your saved credentials.
-
-### 3. Start
-
-```sh
-docker compose up -d
+git clone https://github.com/gm-itsolutions/smtp-relay.git /opt/smtp-relay
+cd /opt/smtp-relay
+git checkout <reviewed tag or commit>
+cp .env.example .env
+chmod 600 .env
+# fill in ENCRYPTION_KEY and SECRET_KEY, bind SMTP/UI to the right addresses
+docker compose up -d --build
 ```
 
 On first boot the UI creates the database and generates a random `admin` password. Retrieve it with:
@@ -190,36 +61,38 @@ On first boot the UI creates the database and generates a random `admin` passwor
 docker compose logs ui | grep -A2 'temporary password'
 ```
 
-### 4. Open the UI
+### 1. Open the UI
 
 Browse to `https://<your-server-ip>/`. Accept the self-signed certificate warning and sign in as `admin`.
 
-### 5. First-login setup
+### 2. First-login setup
 
 - Change the admin password (minimum 12 characters).
 - Enrol TOTP (Google Authenticator, Aegis, Bitwarden, 1Password) by scanning the QR code.
 - Enter the 6-digit code to confirm.
 
-### 6. Configure Microsoft 365
+### 3. Configure Microsoft 365
 
 *Config → Enterprise apps* — open the **Default** app and paste the Tenant ID, Client ID, and Client Secret from your Entra app registration (see [Microsoft Entra ID setup](#microsoft-entra-id-setup) below). Save, then click **Test connection**.
 
 Sending from more than one Microsoft 365 tenant? See [Multiple tenants](#multiple-tenants).
 
-### 7. Add authorised senders
+### 4. Add authorised senders
 
 *Config → Authorised senders* — add each mailbox address the relay is allowed to send *as*. Any `MAIL FROM` not on this list is rejected with `550 Sender not authorized`.
 
 > A toggle at the top of that page can **disable the sender check entirely**, making the relay accept *any* `MAIL FROM`. This is a deliberately risky option (shown in red, with a confirmation) intended only as a temporary measure — it never bypasses SMTP authentication or the IP whitelist, only the From-address allow-list. The change is recorded in the audit log.
 
-### 8. Configure SMTP client authentication
+### 5. Configure SMTP client authentication
 
 Two modes available under *Config → Settings* (at least one must be enabled):
 
 - **Local credentials** — create SMTP accounts under *Config → SMTP accounts* and configure your devices with those credentials.
-- **IP whitelist** — add trusted CIDR ranges; devices from those IPs can send without credentials.
+- **IP whitelist** — add trusted hosts (at most `/24`); devices from those IPs can send without credentials.
 
-### 9. Send a test message
+Prefer one SMTP account per device, bound to the device IP (*Allowed source IPs* `/32`) and to its own mailbox (*Allowed senders*). Use whitelist entries only for devices that cannot authenticate, and give them *Allowed senders* too.
+
+### 6. Send a test message
 
 Point an SMTP client on your LAN at `<your-server-ip>:2525` and send a test email. Watch it move through *Queue* (`pending → sending → sent`) and appear under *Archive*.
 
@@ -227,56 +100,21 @@ Point an SMTP client on your LAN at `<your-server-ip>:2525` and send a test emai
 
 ## Updating
 
+Review the changes first (especially `ui/routers/auth.py` and `relay/`), then:
+
 ```sh
-docker compose pull
-docker compose up -d
+git fetch
+git checkout <new reviewed tag>
+docker compose up -d --build
 ```
 
 Migrations run automatically. All data is preserved.
 
 ---
 
-## Native Windows install
-
-For sites that prefer **not** to run Docker, the same relay and admin panel ship
-as a single Windows installer (`smtp-relay-setup.exe`) that installs them as two
-**Windows background services** (no Docker, no nginx). It is attached to each
-[GitHub Release](https://github.com/nicolafilippetto/smtp-relay/releases) at the
-same version as the Docker images.
-
-| Aspect | Docker | Native Windows |
-|--------|--------|----------------|
-| Runs as | 3 containers | 2 Windows services (`smtp-relay-relay`, `smtp-relay-ui`) |
-| Admin panel | HTTPS via nginx | HTTP on the LAN, **restricted to private/loopback IPs** (no nginx) |
-| Install | `docker compose up -d` | run `smtp-relay-setup.exe` |
-| Data | Docker volume | `C:\ProgramData\smtp-relay` |
-
-What the installer does: bundles everything (Python included — nothing else to
-install), generates the encryption keys, runs the database migrations, creates
-the `admin` user, registers and starts the two services, opens the firewall, and
-adds Start-Menu / tray shortcuts. The web panel is reachable from the LAN but
-**rejects any non-private client IP**, so it stays safe even if the host is
-accidentally exposed to the internet.
-
-Highlights:
-
-- **Tray icon** with live service status (green / orange / grey) and quick
-  actions: open panel, open config/logs, start / stop / restart.
-- **Admin password reset** without editing files: *Start Menu → SMTP Relay →
-  Reset admin password* (or `smtp-relay.exe reset-admin`).
-- **Automatic log rotation** (10 MB × 8 files per service).
-
-Full instructions, configuration options and troubleshooting are in
-**[README-windows.md](README-windows.md)**.
-
-> The Windows build is unsigned for now, so SmartScreen shows an "unknown
-> publisher" prompt on first run (*More info → Run anyway*).
-
----
-
 ## Microsoft Entra ID setup
 
-Everything happens in the Entra admin center. No Exchange Online configuration needed — no connectors, no transport rules.
+App registration and credential in the Entra admin center; the permission is granted in Exchange Online (step 4). No connectors, no transport rules.
 
 1. **Register the application.**
    Entra admin center → *Applications* → *App registrations* → *New registration*.
@@ -311,11 +149,18 @@ Everything happens in the Entra admin center. No Exchange Online configuration n
       in-use certificate, so rotation is zero-downtime: generate → upload →
       activate.
 
-4. **Grant the `Mail.Send` application permission.**
-   *API permissions* → *Add a permission* → *Microsoft Graph* → *Application permissions* → expand *Mail* → check `Mail.Send` → *Add permissions*.
-   Click **Grant admin consent for \<tenant\>** and confirm. The row must show a green "Granted" status.
+4. **Grant `Mail.Send` scoped to the device mailboxes (RBAC for Applications).**
+   Do **not** add or consent `Mail.Send` under *API permissions*: Entra grants and Exchange RBAC grants are additive, so a tenant-wide consent would make the scope below useless. Instead, in Exchange Online PowerShell (member of *Organization Management*):
 
-   > By default `Mail.Send` lets the app send as any mailbox in the tenant. To restrict it to specific mailboxes, apply an `New-ApplicationAccessPolicy` in Exchange Online. This is optional — the relay's **Authorised senders** list is an independent gate regardless.
+   ```powershell
+   Set-Mailbox -Identity printer-a@contoso.com -CustomAttribute10 "smtp-relay"
+   New-ServicePrincipal -AppId <client id> -ObjectId <enterprise app object id> -DisplayName "smtp-relay"
+   New-ManagementScope -Name "smtp-relay-senders" -RecipientRestrictionFilter "CustomAttribute10 -eq 'smtp-relay'"
+   New-ManagementRoleAssignment -App <enterprise app object id> -Role "Application Mail.Send" -CustomResourceScope "smtp-relay-senders"
+   Test-ServicePrincipalAuthorization -Identity "smtp-relay" -Resource printer-a@contoso.com
+   ```
+
+   Use the *Object ID* from *Enterprise applications*, not from *App registrations*. Changes can take 30 minutes to 2 hours to apply.
 
 5. Done. No SMTP AUTH configuration needed anywhere.
 
@@ -384,14 +229,13 @@ If you lose the admin password or TOTP device:
    docker compose up -d
    ```
 
-> **Native Windows:** no file editing — use *Start Menu → SMTP Relay → Reset
-> admin password* (or run `smtp-relay.exe reset-admin` from the install folder).
-
 ---
 
 ## Hardening
 
-**Network:** bind SMTP to a specific interface with `SMTP_BIND_HOST=<LAN-IP>` in `.env`. Keep the UI behind a VPN — it is not designed to be internet-facing.
+**Network:** bind SMTP to a specific interface with `SMTP_BIND_HOST=<LAN-IP>` in `.env` — ports published by Docker bypass host firewalls such as ufw. Keep the UI behind a VPN (`HTTP(S)_BIND_HOST=<VPN-IP>`) — it is not designed to be internet-facing.
+
+**STARTTLS for devices:** place `cert.pem`/`key.pem` in `./smtp-tls` (readable by uid 1000), uncomment the volume in `docker-compose.yml`, and set `SMTP_TLS_CERT=/tls/cert.pem`, `SMTP_TLS_KEY=/tls/key.pem`. With `SMTP_AUTH_REQUIRE_TLS=1` passwords are only accepted after STARTTLS.
 
 **TLS:** replace the self-signed certificate by copying a real `fullchain.pem` and `privkey.pem` into the `smtp-relay-certs` volume:
 
@@ -431,6 +275,8 @@ Three settings under *Config → Settings*:
 | Sent queue row retention | 30 days | none |
 
 The minimums prevent an attacker who gains UI access from immediately erasing evidence.
+
+DEAD queue rows are deleted together with sent rows. Set `ARCHIVE_ENABLED=0` in `.env` to keep no copy of delivered mail at all (the message content is also removed from the queue row once delivered). This is an environment variable on purpose: a UI account cannot change it.
 
 ---
 
@@ -482,23 +328,9 @@ docker compose run --rm ui alembic -c ui/alembic.ini upgrade head
 
 ---
 
-## Building from source
-
-Clone the repo only if you want to modify the code:
-
-```sh
-git clone https://github.com/nicolafilippetto/smtp-relay.git
-cd smtp-relay
-cp .env.example .env
-# fill in ENCRYPTION_KEY and SECRET_KEY
-docker compose -f docker-compose.build.yml up -d --build
-```
-
----
-
 ## About this project
 
-This project was built entirely with [Claude](https://claude.ai) (Anthropic AI). After development, the following security checks were performed manually:
+The upstream project was built entirely with [Claude](https://claude.ai) (Anthropic AI); this fork's changes were also made with Claude and are covered by `tests/` (run `python -m pytest -q`). After development, the following security checks were performed manually:
 
 - **SAST** (Static Application Security Testing) — static analysis of the source code
 - **DAST** (Dynamic Application Security Testing) — testing against a running instance

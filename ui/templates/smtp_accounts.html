@@ -25,6 +25,12 @@
       <span class="small">One per line, or comma-separated. Login is refused if the source IP does not match any of these.</span>
     </label>
     <label>
+      Allowed senders
+      <textarea name="allowed_senders" rows="2"
+                placeholder="printer-a@example.com"></textarea>
+      <span class="small">One address per line. MAIL FROM must be one of these (and on the authorised-sender list). Empty = any authorised sender.</span>
+    </label>
+    <label>
       Description (optional)
       <input type="text" name="description">
     </label>
@@ -42,6 +48,7 @@
       <tr>
         <th>Username</th>
         <th>Allowed IPs</th>
+        <th>Allowed senders</th>
         {% if show_apps %}<th>Enterprise apps</th>{% endif %}
         <th>Description</th>
         <th>Status</th>
@@ -60,6 +67,9 @@
           {% else %}
             <span class="muted">any</span>
           {% endif %}
+        </td>
+        <td class="mono small">
+          {% if r.allowed_senders %}{{ r.allowed_senders | replace('\n', ', ') }}{% else %}<span class="muted">any authorised</span>{% endif %}
         </td>
         {% if show_apps %}
         <td class="small">

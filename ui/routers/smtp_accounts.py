@@ -118,6 +118,7 @@ async def create(
     username: str = Form(""),
     password: str = Form(""),
     allowed_cidrs: str = Form(""),
+    allowed_senders: str = Form(""),
     description: str = Form(""),
     app_scope: str = Form("all"),
     app_ids: list[int] = Form([]),
@@ -136,6 +137,7 @@ async def create(
             username=username,
             password=password,
             allowed_cidrs=allowed_cidrs,
+            allowed_senders=allowed_senders,
             description=description,
         )
     except ValidationError as exc:
@@ -157,6 +159,7 @@ async def create(
                 username=data.username,
                 password_hash=hash_password(data.password),
                 allowed_cidrs=data.allowed_cidrs,
+                allowed_senders=data.allowed_senders,
                 description=data.description or None,
                 is_enabled=True,
             )
@@ -170,6 +173,7 @@ async def create(
                     "action": "create",
                     "username": data.username,
                     "allowed_cidrs_count": len(data.allowed_cidrs.splitlines()) if data.allowed_cidrs else 0,
+                    "allowed_senders": data.allowed_senders.splitlines(),
                     "restrict_apps": restrict,
                     "app_ids": sorted(chosen),
                 },
@@ -222,6 +226,7 @@ async def edit_save(
     request: Request,
     password: str = Form(""),
     allowed_cidrs: str = Form(""),
+    allowed_senders: str = Form(""),
     description: str = Form(""),
     app_scope: str = Form("all"),
     app_ids: list[int] = Form([]),
@@ -240,6 +245,7 @@ async def edit_save(
                 username=row.username,
                 password=password,
                 allowed_cidrs=allowed_cidrs,
+                allowed_senders=allowed_senders,
                 description=description,
             )
         except ValidationError as exc:
@@ -252,6 +258,7 @@ async def edit_save(
             if password:
                 row.password_hash = hash_password(password)
             row.allowed_cidrs = data.allowed_cidrs
+            row.allowed_senders = data.allowed_senders
             row.description = description.strip() or None
             await _set_app_scope(s, row, restrict, chosen)
             await audit_config_change(
@@ -262,6 +269,7 @@ async def edit_save(
                     "username": row.username,
                     "password_changed": bool(password),
                     "allowed_cidrs_count": len(data.allowed_cidrs.splitlines()) if data.allowed_cidrs else 0,
+                    "allowed_senders": data.allowed_senders.splitlines(),
                     "restrict_apps": restrict,
                     "app_ids": sorted(chosen),
                 },

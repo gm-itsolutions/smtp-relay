@@ -9,7 +9,9 @@
   <p class="small muted">
     Sources matching one of these CIDRs may submit mail without SMTP
     <code>AUTH</code>. Accepts single IPs (e.g. <code>10.1.2.3</code>)
-    and network ranges (e.g. <code>10.0.0.0/8</code>).
+    and networks up to <code>/24</code> (IPv6 <code>/64</code>). Prefer
+    single hosts and an SMTP account wherever the device supports AUTH.
+    Allowed senders: comma-separated; empty = any authorised sender.
     Only effective when the whitelist mode is enabled under
     <a href="/config/settings">Settings</a>.
   </p>
@@ -19,6 +21,7 @@
   <form method="post" action="/config/whitelist" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="text" name="cidr" placeholder="10.0.0.0/24" required>
+    <input type="text" name="allowed_senders" placeholder="Allowed senders (comma-separated)">
     <input type="text" name="description" placeholder="Description (optional)">
     <button type="submit" class="btn btn-primary">Add</button>
   </form>
@@ -27,13 +30,14 @@
   <table class="data">
     <thead>
       <tr>
-        <th>CIDR</th><th>Description</th><th>Status</th><th>Created</th><th></th>
+        <th>CIDR</th><th>Allowed senders</th><th>Description</th><th>Status</th><th>Created</th><th></th>
       </tr>
     </thead>
     <tbody>
       {% for r in rows %}
       <tr>
         <td class="mono">{{ r.cidr }}</td>
+        <td class="mono small">{% if r.allowed_senders %}{{ r.allowed_senders | replace('\n', ', ') }}{% else %}<span class="muted">any authorised</span>{% endif %}</td>
         <td>{{ r.description or "" }}</td>
         <td>
           <span class="pill pill-{{ 'ok' if r.is_enabled else 'muted' }}">

@@ -29,6 +29,25 @@ def _clean(value: str | None) -> str:
     return (value or "").strip()
 
 
+def _sender_list(v: str) -> str:
+    """Validate a newline/comma separated address list; canonical one per line."""
+    out: list[str] = []
+    for chunk in (v or "").replace(",", "\n").splitlines():
+        addr = chunk.strip().lower()
+        if not addr:
+            continue
+        if not _EMAIL_RE.match(addr):
+            raise ValueError(f"Not a valid email address: {addr}")
+        if addr not in out:
+            out.append(addr)
+    return "\n".join(out)
+
+
+# Narrowest-allowed whitelist networks: anything wider would turn a whole
+# client LAN into password-less senders.
+_WHITELIST_MIN_PREFIX = {4: 24, 6: 64}
+
+
 class TenantConfigIn(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -159,6 +178,7 @@ class CidrIn(BaseModel):
 
     cidr: Annotated[str, Field(min_length=1, max_length=64)]
     description: str = ""
+    allowed_senders: str = ""
 
     @field_validator("cidr")
     @classmethod
@@ -167,7 +187,18 @@ class CidrIn(BaseModel):
             net = ipaddress.ip_network(v, strict=False)
         except ValueError as exc:
             raise ValueError(f"Invalid CIDR or IP: {exc}") from exc
+        if net.prefixlen < _WHITELIST_MIN_PREFIX[net.version]:
+            raise ValueError(
+                f"Network too wide: whitelist entries must be /"
+                f"{_WHITELIST_MIN_PREFIX[net.version]} or narrower "
+                "(prefer single hosts, /32)."
+            )
         return str(net)
+
+    @field_validator("allowed_senders")
+    @classmethod
+    def _valid_senders(cls, v: str) -> str:
+        return _sender_list(v)
 
 
 class SenderIn(BaseModel):
@@ -220,7 +251,14 @@ class SmtpAccountIn(BaseModel):
     password: str = ""
     # Newline- or comma-separated CIDRs. Empty = any IP.
     allowed_cidrs: str = ""
+    # Newline- or comma-separated addresses. Empty = any authorised sender.
+    allowed_senders: str = ""
     description: str = ""
+
+    @field_validator("allowed_senders")
+    @classmethod
+    def _valid_senders(cls, v: str) -> str:
+        return _sender_list(v)
 
     @field_validator("allowed_cidrs")
     @classmethod
@@ -351,8 +389,13 @@ def settings_form(
 def cidr_form(
     cidr: str = Form(""),
     description: str = Form(""),
+    allowed_senders: str = Form(""),
 ) -> CidrIn:
-    return CidrIn(cidr=_clean(cidr), description=_clean(description))
+    return CidrIn(
+        cidr=_clean(cidr),
+        description=_clean(description),
+        allowed_senders=allowed_senders,
+    )
 
 
 def sender_form(
@@ -367,10 +410,12 @@ def smtp_account_form(
     password: str = Form(""),
     allowed_cidrs: str = Form(""),
     description: str = Form(""),
+    allowed_senders: str = Form(""),
 ) -> SmtpAccountIn:
     return SmtpAccountIn(
         username=_clean(username),
         password=password,
         allowed_cidrs=allowed_cidrs,
+        allowed_senders=allowed_senders,
         description=_clean(description),
     )

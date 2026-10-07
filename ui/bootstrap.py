@@ -109,6 +109,7 @@ async def _apply_admin_reset() -> None:
         admin.totp_enrolled_at = None
         admin.must_change_password = True
         admin.is_active = True
+        admin.session_version = (admin.session_version or 0) + 1
 
         await audit_record(
             session,

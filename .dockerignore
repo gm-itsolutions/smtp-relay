@@ -2,9 +2,8 @@
 # common/, relay/, ui/ (plus the requirements files), so everything else is
 # noise that would otherwise be uploaded to the Docker daemon on every build.
 
-# Native-Windows packaging — never part of any Docker image.
-windows/
-README-windows.md
+# Tests are run in CI, not shipped.
+tests/
 
 # Git / CI / editor metadata
 .git/
