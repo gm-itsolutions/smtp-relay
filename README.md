@@ -79,6 +79,8 @@ Sending from more than one Microsoft 365 tenant? See [Multiple tenants](#multipl
 
 ### 4. Add authorised senders
 
+(Adding more devices, domains or tenants later: see [Common tasks](#common-tasks).)
+
 *Config → Authorised senders* — add each mailbox address the relay is allowed to send *as*. Any `MAIL FROM` not on this list is rejected with `550 Sender not authorized`.
 
 > A toggle at the top of that page can **disable the sender check entirely**, making the relay accept *any* `MAIL FROM`. This is a deliberately risky option (shown in red, with a confirmation) intended only as a temporary measure — it never bypasses SMTP authentication or the IP whitelist, only the From-address allow-list. The change is recorded in the audit log.
@@ -173,14 +175,15 @@ the sender's domain:
 
 1. *Config → Enterprise apps* — add one enterprise app per tenant and set
    up each one as described above (its own app registration, credential and
-   `Mail.Send` consent), then **Test connection**.
+   RBAC `Mail.Send` assignment in *that* tenant), then **Test connection**.
 2. *Config → Domains* — map each sender domain to the app of its tenant.
    The **default app** handles every domain without a mapping; optionally,
    tick *Refuse senders whose domain is not mapped* to reject those instead.
 3. Optionally, on an SMTP account, choose *Only the apps selected below*
    so that account can only send for the domains of those apps (for example
    so a branch's devices cannot send as another branch). Clients let in by
-   the IP whitelist are not limited by this setting.
+   the IP whitelist are not limited by this setting — limit them with
+   *Allowed senders* on the whitelist entry instead.
 
 The relay picks the app when the client sends `MAIL FROM`, so a sender it
 cannot route (or an account using an app it is not allowed to) is refused
@@ -190,6 +193,135 @@ The *Authorised senders* page shows which app each sender goes through.
 Upgrading from a version with a single tenant needs no action: the existing
 configuration becomes the default app, named *Default*, and the domains of
 your authorised senders are mapped to it automatically.
+
+---
+
+## Common tasks
+
+Step-by-step recipes for working with a running relay. Example values:
+tenant `contoso.com`, relay LAN IP `192.168.10.40`, Exchange scope
+`smtp-relay-senders` on `CustomAttribute10 = "smtp-relay"` (from
+[Microsoft Entra ID setup](#microsoft-entra-id-setup), step 4).
+
+> **What "Test connection" proves:** only that the relay can get a token
+> for the app. It does **not** prove the app may send as a mailbox (with
+> RBAC for Applications the token carries no `Mail.Send` role). Always
+> finish with a real test mail and, for a new mailbox,
+> `Test-ServicePrincipalAuthorization`.
+
+### Add a device (new sender, existing tenant)
+
+One device = one mailbox = one SMTP account (or one whitelist entry).
+
+1. **Mailbox** (Exchange Online PowerShell):
+   ```powershell
+   New-Mailbox -Shared -Name "NAS" -DisplayName "NAS alerts" -PrimarySmtpAddress nas@contoso.com
+   Set-Mailbox -Identity nas@contoso.com -CustomAttribute10 "smtp-relay"
+   Test-ServicePrincipalAuthorization -Identity "smtp-relay" -Resource nas@contoso.com
+   ```
+   `InScope` must be `True` (allow up to 2 hours for the RBAC cache). The
+   role assignment itself does not change — the scope picks up every
+   mailbox carrying the attribute. Shared mailboxes need no licence.
+   Bounces and replies land in this mailbox: forward it or grant someone
+   read access.
+2. **Authorised sender:** *Config → Authorised senders* → add `nas@contoso.com`.
+   The page shows which enterprise app the sender is routed through; if it
+   says "not mapped", see [Add a sender domain](#add-a-sender-domain).
+3. **Device access** — pick one:
+   - **Device supports SMTP AUTH (preferred):** *Config → SMTP accounts* →
+     new account
+     - Username: `nas`, password: random, ≥ 24 characters (store it in your
+       password manager)
+     - *Allowed source IPs / CIDRs*: the device IP as `/32`, e.g. `192.168.10.30/32`
+     - *Allowed senders*: `nas@contoso.com`
+     - with several enterprise apps: *Only the apps selected below* → the app
+       of this tenant
+   - **Device cannot authenticate:** *Config → IP whitelist* → add
+     `192.168.10.30` with *Allowed senders* `nas@contoso.com`. Make sure the
+     whitelist mode is enabled under *Config → Settings*.
+4. **Firewall:** allow TCP 25 (or your `SMTP_BIND_PORT`) from the device IP to
+   `192.168.10.40`, if a firewall sits between them.
+5. **Device settings:** SMTP server `192.168.10.40`, port `SMTP_BIND_PORT`,
+   no SSL/TLS (STARTTLS only if configured, see [Hardening](#hardening)),
+   username/password from step 3 (or none for whitelist), **sender address
+   exactly `nas@contoso.com`** — the header From must equal the envelope
+   sender.
+6. **Test:** send a test mail from the device, then check *Queue*
+   (`sent`) and the *Audit log* (`smtp_relay_ok`, with the real device IP
+   — not a `172.28.0.x` Docker address).
+
+Typical refusals (reason in the *Audit log*):
+
+| Device sees | Audit reason | Fix |
+|---|---|---|
+| `530 Authentication required` | — | Account missing on the device, or IP not whitelisted |
+| `535 Authentication failed` | `ip_not_allowed_for_user` / invalid credentials | Wrong password or device IP not in *Allowed source IPs* |
+| `550 Sender not authorized` at `MAIL FROM` | `sender not authorised` | Address missing under *Authorised senders* |
+| `550 Sender not authorized` at `MAIL FROM` | `sender not allowed for this client` | Address missing in the account's / whitelist entry's *Allowed senders* |
+| `550 Sender not authorized` at `MAIL FROM` | `sender domain not mapped…` | Map the domain (next recipe) |
+| `550 Header From must match MAIL FROM` | `header From differs…` | Set the device's sender address to the mailbox address |
+| mail ends as `dead`, Graph `403` (access denied) | — | Mailbox not in the RBAC scope (attribute missing, or cache not yet refreshed) |
+
+### Change or remove a device
+
+- **New IP / new password:** *Config → SMTP accounts* → *Edit*. Whitelist
+  entries cannot be edited: add the new one, delete the old one.
+- **Remove:** delete the SMTP account or whitelist entry, delete the address
+  under *Authorised senders*, then take the mailbox out of the Exchange scope:
+  ```powershell
+  Set-Mailbox -Identity nas@contoso.com -CustomAttribute10 $null
+  ```
+  Delete the shared mailbox only if nobody needs its bounces/replies anymore.
+
+### Add a sender domain
+
+For a second domain of the **same** tenant (e.g. `contoso.de`):
+
+1. The domain must be an accepted domain in that Microsoft 365 tenant.
+2. *Config → Domains* → map `contoso.de` to the tenant's enterprise app. If
+   *Refuse senders whose domain is not mapped* is off, unmapped domains go
+   through the default app — mapping them explicitly is still clearer.
+3. Add devices as above with addresses in the new domain.
+
+### Add a tenant
+
+For a second Microsoft 365 tenant (other company or branch) on the same relay.
+If the tenants belong to **different customers**, run a separate relay
+instance instead — one instance per customer keeps admin access, audit log
+and archive apart.
+
+1. **In the new tenant**, repeat [Microsoft Entra ID setup](#microsoft-entra-id-setup):
+   app registration (single tenant, no `Mail.Send` consent), then in that
+   tenant's Exchange Online: `New-ServicePrincipal`, management scope,
+   `New-ManagementRoleAssignment` with *Application Mail.Send*.
+2. *Config → Enterprise apps* → *Add enterprise app* → name it after the
+   tenant → enter its *Directory (tenant) ID* and *Application (client) ID*.
+3. On the new app's page: **Generate certificate** → download the `.cer` →
+   upload it in the new tenant (*Certificates & secrets → Certificates*) →
+   **Activate** → **Test connection**.
+4. *Config → Domains* → map every sender domain of that tenant to the new app.
+5. Add its devices as in [Add a device](#add-a-device-new-sender-existing-tenant).
+   On each SMTP account choose *Only the apps selected below* → the new app,
+   so devices of one tenant can never send through the other.
+6. *Config → Notifications*: the alert sender must be an authorised sender
+   of one of the tenants; daily digest and certificate-expiry alerts cover
+   all apps.
+
+### Rotate a certificate
+
+The daily digest warns before expiry (*Config → Notifications*). On the
+app's page: **Generate new certificate** → upload the new `.cer` in Entra →
+**Activate** → **Test connection** → send a test mail → delete the old
+certificate in Entra. The live certificate keeps working until you activate
+the new one.
+
+### Check the whole chain
+
+1. *Config → Notifications* → send a test alert (goes through queue, Graph
+   and archive like any device mail).
+2. `Test-ServicePrincipalAuthorization -Identity "smtp-relay" -Resource <mailbox>`
+   for each sender mailbox: `True`; for a normal user mailbox: `False`.
+3. From a host **without** an account: a mail to the relay must be refused.
 
 ---
 
