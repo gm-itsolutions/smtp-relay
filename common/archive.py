@@ -51,12 +51,14 @@ def _sanitise(subject: str | None, max_len: int = 48) -> str:
 
 
 def archive_enabled() -> bool:
-    """ARCHIVE_ENABLED=0 keeps no copy of delivered mail (data minimisation).
+    """Off by default: no copy of delivered mail (data minimisation, GDPR).
+
+    ARCHIVE_ENABLED=1 keeps an .eml per delivered mail under ARCHIVE_PATH.
 
     Deliberately an environment variable, not a UI setting: a compromised UI
     account can neither switch evidence keeping off nor on.
     """
-    return os.environ.get("ARCHIVE_ENABLED", "1") != "0"
+    return os.environ.get("ARCHIVE_ENABLED", "0") == "1"
 
 
 def write_eml(

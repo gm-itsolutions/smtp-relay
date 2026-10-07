@@ -10,7 +10,7 @@ An on-premise SMTP relay that lets your applications and devices send email thro
 > - **Per-client sender binding:** SMTP accounts and whitelist entries have *Allowed senders*; a device can only use its own `MAIL FROM`.
 > - **Header From must equal MAIL FROM** (no display spoofing).
 > - **Whitelist width:** entries wider than `/24` (IPv6 `/64`) are refused.
-> - **Data minimisation:** `ARCHIVE_ENABLED=0` keeps no copy of delivered mail; DEAD queue rows are pruned with the sent-row retention.
+> - **Data minimisation:** the mail archive is **off by default** (`ARCHIVE_ENABLED=1` to enable); delivered content is removed from the queue; DEAD queue rows are pruned with the sent-row retention.
 > - **TLS always on:** STARTTLS on 25/587 and SMTPS on 465; self-signed certificate generated on first start (or your own). SMTP accounts authenticate only over TLS; whitelist entries require TLS unless explicitly allowed plain (legacy devices). Size limit enforced while reading DATA.
 > - **Deployment:** images are built locally from this checkout (no third-party registry, no `:latest`); relay healthcheck; Windows variant removed; Dependabot also for pip; CI runs the tests.
 > - **Entra:** use RBAC for Applications to scope `Mail.Send` to the device mailboxes (see below) instead of tenant-wide consent.
@@ -425,7 +425,9 @@ Three settings under *Config → Settings*:
 
 The minimums prevent an attacker who gains UI access from immediately erasing evidence.
 
-DEAD queue rows are deleted together with sent rows. Set `ARCHIVE_ENABLED=0` in `.env` to keep no copy of delivered mail at all (the message content is also removed from the queue row once delivered). This is an environment variable on purpose: a UI account cannot change it.
+DEAD queue rows are deleted together with sent rows.
+
+**The archive is off by default** (`ARCHIVE_ENABLED=0`): no copy of delivered mail is kept, and the message content is removed from the queue row once delivered — scans often contain personal data, and the relay should not become another place that stores it. Delivery stays traceable through the audit log and Exchange Online message trace. Set `ARCHIVE_ENABLED=1` in `.env` only if evidence copies are required (then agree the retention with the data controller). This is an environment variable on purpose: a UI account can neither switch it on nor off. The archive retention setting only applies when the archive is enabled.
 
 ---
 

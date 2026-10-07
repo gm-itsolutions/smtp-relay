@@ -118,6 +118,8 @@ def test_whitelist_rejects_wide_networks(cidr, ok):
 def test_archive_can_be_disabled(monkeypatch):
     from common import archive
 
+    monkeypatch.delenv("ARCHIVE_ENABLED", raising=False)  # default: off
+    assert archive.write_eml(message_id=1, subject="x", raw_mime=b"x") is None
     monkeypatch.setenv("ARCHIVE_ENABLED", "0")
     assert archive.write_eml(message_id=1, subject="x", raw_mime=b"x") is None
     monkeypatch.setenv("ARCHIVE_ENABLED", "1")
