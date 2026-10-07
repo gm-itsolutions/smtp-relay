@@ -2,18 +2,16 @@
 
 An on-premise SMTP relay that lets your applications and devices send email through Microsoft 365 **without needing SMTP AUTH**.
 
-> **GM IT Solutions fork** of [nicolafilippetto/smtp-relay](https://github.com/nicolafilippetto/smtp-relay) (v2.7.0, MIT). Changes, each covered by tests in `tests/`:
->
-> - **TOTP bypass fixed:** `/login/totp/enrol` no longer re-displays an existing TOTP secret (upstream: password alone gave a full admin session).
-> - **TOTP brute force:** wrong codes count towards the UI IP ban, and the ban is enforced on the TOTP step.
-> - **Revocable sessions:** cookies carry `User.session_version`; logout, password change, TOTP reset and disabling a user revoke every session. `must_change_password` is enforced server-side.
-> - **Per-client sender binding:** SMTP accounts and whitelist entries have *Allowed senders*; a device can only use its own `MAIL FROM`.
-> - **Header From must equal MAIL FROM** (no display spoofing).
-> - **Whitelist width:** entries wider than `/24` (IPv6 `/64`) are refused.
-> - **Data minimisation:** the mail archive is **off by default** (`ARCHIVE_ENABLED=1` to enable); delivered content is removed from the queue; DEAD queue rows are pruned with the sent-row retention.
-> - **TLS always on:** STARTTLS on 25/587 and SMTPS on 465; self-signed certificate generated on first start (or your own). SMTP accounts authenticate only over TLS; whitelist entries require TLS unless explicitly allowed plain (legacy devices). Size limit enforced while reading DATA.
-> - **Deployment:** images are built locally from this checkout (no third-party registry, no `:latest`); relay healthcheck; Windows variant removed; Dependabot also for pip; CI runs the tests.
-> - **Entra:** use RBAC for Applications to scope `Mail.Send` to the device mailboxes (see below) instead of tenant-wide consent.
+Built and maintained by **GM IT Solutions** (Marvin Gawenda) for small and medium businesses.
+
+**Security by default:**
+
+- **Admin UI:** mandatory TOTP, brute-force bans on password and TOTP, revocable sessions (logout, password change and disabling a user end every session), forced password change on first login.
+- **Per-device rules:** each device gets its own SMTP account bound to its IP, or a whitelist entry (at most `/24`); both are bound to the device's own sender address (*Allowed senders*). Header From must equal the envelope sender.
+- **TLS always on:** STARTTLS on 25/587, SMTPS on 465; passwords only over TLS; whitelist entries require TLS unless a legacy device is explicitly allowed plain.
+- **Data minimisation:** no mail archive by default; delivered content is removed from the queue.
+- **Least privilege in Microsoft 365:** `Mail.Send` scoped to the device mailboxes with RBAC for Applications.
+- **Supply chain:** images are built locally from this repository; automated tests run on every push.
 
 ---
 
@@ -21,7 +19,7 @@ An on-premise SMTP relay that lets your applications and devices send email thro
 
 Microsoft is retiring Basic Authentication for SMTP AUTH (username + password over SMTP) in **Exchange Online at the end of December 2026** ([official announcement](https://techcommunity.microsoft.com/blog/exchange/updated-exchange-online-smtp-auth-basic-authentication-deprecation-timeline/4489835)). After that date, any printer, scanner, legacy application, or internal tool that sends email via `smtp.office365.com` with a username and password will stop working.
 
-This project solves the problem cleanly: instead of connecting to Office 365 over SMTP, it relays mail through the **Microsoft Graph API** using OAuth 2.0 Client Credentials. Your devices and applications talk to this relay over plain SMTP on your LAN — no code changes needed on their side.
+This project solves the problem cleanly: instead of connecting to Office 365 over SMTP, it relays mail through the **Microsoft Graph API** using OAuth 2.0 Client Credentials. Your devices and applications talk to this relay over SMTP with TLS on your LAN — no code changes needed on their side.
 
 **In short:** your devices keep sending email exactly as they do today. The relay handles the modern authentication with Microsoft 365 on their behalf.
 
@@ -481,11 +479,8 @@ docker compose run --rm ui alembic -c ui/alembic.ini upgrade head
 
 ## About this project
 
-The upstream project was built entirely with [Claude](https://claude.ai) (Anthropic AI); this fork's changes were also made with Claude and are covered by `tests/` (run `python -m pytest -q`). After development, the following security checks were performed manually:
+Developed and maintained by GM IT Solutions, Marvin Gawenda (Pritzwalk, Germany). Licensed under the MIT License — see [LICENSE](LICENSE).
 
-- **SAST** (Static Application Security Testing) — static analysis of the source code
-- **DAST** (Dynamic Application Security Testing) — testing against a running instance
-- **Bug check** — manual review of logic and error handling
-- **CodeQL** — GitHub's CodeQL analysis workflow, run on the repository
+Automated tests cover the security-relevant paths (login/TOTP, sessions, per-device sender and TLS rules, header checks, TLS listeners, queue): `python -m pytest -q`, run in CI on every push.
 
-The project is provided as-is. Use it at your own risk and always review the security considerations in the [Hardening](#hardening) section before deploying to production.
+The software is provided as-is. Review the [Hardening](#hardening) section before deploying to production.

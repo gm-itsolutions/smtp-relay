@@ -2,11 +2,9 @@
 
 ## Reporting a Vulnerability
 
-This is the GM IT Solutions fork. Report vulnerabilities in this fork via a
-private GitHub security advisory on `gm-itsolutions/smtp-relay`, or directly
-to GM IT Solutions. Issues that also affect the original project are reported
-upstream as well:
-[nicolafilippetto/smtp-relay advisories](https://github.com/nicolafilippetto/smtp-relay/security/advisories/new).
+Report vulnerabilities privately via a GitHub security advisory on
+`gm-itsolutions/smtp-relay`, or directly to GM IT Solutions. Please do not
+open a public issue.
 
 ---
 
