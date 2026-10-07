@@ -126,6 +126,35 @@ def test_archive_can_be_disabled(monkeypatch):
     assert archive.write_eml(message_id=1, subject="x", raw_mime=b"x").exists()
 
 
+def test_retry_with_cleared_content_marks_dead_instead_of_sending_empty():
+    # A SENT row with the archive disabled has its raw_mime_b64 cleared
+    # (see QueueWorker._process). Requeuing such a row (e.g. a stale
+    # "Retry" click) must not resend an empty message.
+    from relay.queue_manager import QueueWorker
+
+    async def _add_row():
+        async with session_scope() as s:
+            row = MailQueue(
+                sender="a@kunde.de", recipients_json='["b@kunde.de"]',
+                raw_mime_b64="", status=MailStatus.PENDING,
+                timestamp_received=dt.datetime.utcnow(),
+            )
+            s.add(row)
+            await s.flush()
+            return row.id
+
+    row_id = run(_add_row())
+    run(QueueWorker()._process(row_id))
+
+    async def _get():
+        async with session_scope() as s:
+            return await s.get(MailQueue, row_id)
+
+    row = run(_get())
+    assert row.status == MailStatus.DEAD
+    assert "no longer available" in row.last_error
+
+
 def test_prune_removes_old_dead_rows():
     from relay.queue_manager import prune_sent
 

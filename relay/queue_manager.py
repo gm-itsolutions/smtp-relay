@@ -342,6 +342,24 @@ class QueueWorker:
             row = await session.get(MailQueue, row_id)
             if row is None:
                 return
+            if not row.raw_mime_b64:
+                # Content is only ever cleared after a successful send with
+                # the archive disabled (see the SENT branch below) — a row
+                # queued fresh always has a body. Requeuing such a row (e.g.
+                # a stale "Retry" on an already-sent message) must not go
+                # out as an empty mail: mark it DEAD instead of sending.
+                row.status = MailStatus.DEAD
+                row.last_error = "Message content no longer available (already delivered, archive disabled)."
+                row.next_attempt_at = None
+                await audit_record(
+                    session,
+                    event_type=AuditEventType.SMTP_RELAY_FAIL,
+                    outcome=AuditOutcome.FAILURE,
+                    source_ip=row.source_ip,
+                    username=row.source_username,
+                    details={"queue_id": row.id, "reason": "content_removed_after_delivery"},
+                )
+                return
             raw = base64.b64decode(row.raw_mime_b64.encode("ascii"))
             # Done at send time (not enqueue) so the stored message stays as
             # received, and rows queued before this fix also get their BCCs.
