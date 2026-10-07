@@ -63,10 +63,10 @@ services:
       SMTPS_LISTEN_PORT: "2465"
       SMTP_MAX_MESSAGE_SIZE: ${SMTP_MAX_MESSAGE_SIZE:-31457280}
       SMTP_MAX_RECIPIENTS: ${SMTP_MAX_RECIPIENTS:-100}
-      # Off by default: no copy of delivered mail (see README -> Retention).
+      # Off by default: no copy of delivered mail (see docs/08-betrieb.md).
       ARCHIVE_ENABLED: ${ARCHIVE_ENABLED:-0}
       # TLS is always on. Without SMTP_TLS_CERT/KEY a self-signed certificate
-      # is generated once into /data/smtp-tls (see README -> TLS).
+      # is generated once into /data/smtp-tls (see docs/06-tls.md).
       SMTP_TLS_CERT: ${SMTP_TLS_CERT:-}
       SMTP_TLS_KEY: ${SMTP_TLS_KEY:-}
       SMTP_TLS_HOSTNAME: ${SMTP_TLS_HOSTNAME:-}
