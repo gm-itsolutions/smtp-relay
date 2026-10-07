@@ -187,6 +187,13 @@ class CidrIn(BaseModel):
             net = ipaddress.ip_network(v, strict=False)
         except ValueError as exc:
             raise ValueError(f"Invalid CIDR or IP: {exc}") from exc
+        from common.netutils import public_mode
+
+        if public_mode() and net.prefixlen != net.max_prefixlen:
+            raise ValueError(
+                "Public mode: whitelist entries must be single addresses "
+                "(the customer's fixed public IP)."
+            )
         if net.prefixlen < _WHITELIST_MIN_PREFIX[net.version]:
             raise ValueError(
                 f"Network too wide: whitelist entries must be /"

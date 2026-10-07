@@ -255,6 +255,11 @@ def build_listeners(handler, authenticator, controller_kwargs: dict, tls_ctx):
 
     listener_kwargs = dict(
         hostname=controller_kwargs["hostname"],
+        # Greeting: "220 <SMTP_TLS_HOSTNAME> ESMTP" — no software/version banner.
+        server_hostname=os.environ.get("SMTP_TLS_HOSTNAME", "").strip() or None,
+        ident="ESMTP",
+        # Idle timeout between commands; frees slots held by silent clients.
+        timeout=float(os.environ.get("SMTP_IDLE_TIMEOUT", "120")),
         authenticator=authenticator,
         auth_required=False,  # whitelisted IPs skip AUTH; we gate in handlers
         auth_require_tls=True,  # passwords only over TLS

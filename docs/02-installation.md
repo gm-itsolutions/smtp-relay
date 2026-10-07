@@ -1,6 +1,6 @@
 # 2. Installation (Proxmox, Docker)
 
-Das Relay läuft in einer Debian-VM oder einem LXC-Container mit Docker. Für Kunden ist eine **VM** die robustere Wahl; ein LXC geht ebenfalls (getestet), braucht aber `nesting` und `keyctl`.
+Das Relay läuft in einer Debian-VM oder einem LXC-Container mit Docker im Kundennetz. Ohne Server beim Kunden: [Öffentlich auf einem VPS](12-vps.md). Für Kunden ist eine **VM** die robustere Wahl; ein LXC geht ebenfalls (getestet), braucht aber `nesting` und `keyctl`.
 
 Mindestens: 1 vCPU, 1 GB RAM, 8–10 GB Disk, **feste interne IP**.
 
@@ -60,7 +60,7 @@ SMTPS_BIND_PORT=465
 SMTP_TLS_HOSTNAME=smtp-relay.<kunde>.local
 SMTP_MAX_RECIPIENTS=20
 
-# Oberfläche: im Lab LAN-IP, beim Kunden die VPN-/Tailscale-IP
+# Oberfläche: LAN-IP des Relays; von außen nur über das VPN des Kunden
 HTTP_BIND_HOST=<ui-ip>
 HTTPS_BIND_HOST=<ui-ip>
 

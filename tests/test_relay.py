@@ -168,3 +168,26 @@ def test_prune_removes_old_dead_rows():
 
     _add(row(MailStatus.DEAD, old), row(MailStatus.SENT, old), row(MailStatus.DEAD, dt.datetime.utcnow()))
     assert run(prune_sent(30)) == 2
+
+
+def test_public_mode_forces_tls_and_single_hosts(monkeypatch):
+    from relay.auth import client_policy_refusal as policy
+    from ui.forms import CidrIn
+
+    _add(IpWhitelistEntry(cidr="203.0.113.7/32", allowed_senders="cam@kunde.de", tls_required=False))
+    assert run(policy(None, "203.0.113.7", "cam@kunde.de", False)) is None
+    monkeypatch.setenv("SMTP_PUBLIC_MODE", "1")
+    assert run(policy(None, "203.0.113.7", "cam@kunde.de", False)) == "tls"
+    CidrIn(cidr="203.0.113.7")
+    with pytest.raises(ValidationError):
+        CidrIn(cidr="203.0.113.0/24")
+
+
+def test_public_mode_refuses_legacy_tls(tmp_path, monkeypatch):
+    from relay.tls import server_context
+
+    monkeypatch.setenv("SMTP_TLS_DIR", str(tmp_path / "tls"))
+    monkeypatch.setenv("SMTP_TLS_MIN_VERSION", "1.0")
+    monkeypatch.setenv("SMTP_PUBLIC_MODE", "1")
+    with pytest.raises(RuntimeError):
+        server_context()

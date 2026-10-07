@@ -43,7 +43,7 @@ Für Geräte, die das Zertifikat prüfen:
    ```
 4. `docker compose up -d`
 
-Let's Encrypt-Zertifikate laufen 90 Tage – Erneuerung (z. B. DNS-Challenge) und `docker compose restart relay` automatisieren.
+Let's Encrypt-Zertifikate laufen 90 Tage. Auf einem öffentlich erreichbaren Server erledigt das `deploy/letsencrypt-deploy-hook.sh` mit certbot ([VPS](12-vps.md#4-lets-encrypt-zertifikat)); im Kundennetz ohne öffentlichen Zugang per DNS-Challenge erneuern und `docker compose restart relay` ausführen.
 
 ### Selbst erzeugtes Zertifikat erneuern
 

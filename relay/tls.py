@@ -82,6 +82,10 @@ def server_context() -> ssl.SSLContext:
     if min_version not in _MIN_VERSIONS:
         raise RuntimeError(f"SMTP_TLS_MIN_VERSION must be one of {sorted(_MIN_VERSIONS)}")
     if min_version in ("1.0", "1.1"):
+        from common.netutils import public_mode
+
+        if public_mode():
+            raise RuntimeError("SMTP_TLS_MIN_VERSION below 1.2 is not allowed with SMTP_PUBLIC_MODE=1.")
         # ponytail: legacy knob for old printers/UPS cards; per-listener, not per-device.
         ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
     ctx.minimum_version = _MIN_VERSIONS[min_version]

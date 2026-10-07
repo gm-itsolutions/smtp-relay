@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 from typing import Iterable
+
+
+def public_mode() -> bool:
+    """SMTP_PUBLIC_MODE=1: the SMTP ports are reachable from the internet.
+
+    Then plain (non-TLS) SMTP is never allowed, whitelist entries must be
+    single hosts, and the TLS minimum cannot be lowered below 1.2.
+    """
+    return os.environ.get("SMTP_PUBLIC_MODE", "0") == "1"
 
 
 def parse_cidr(text: str) -> ipaddress._BaseNetwork:

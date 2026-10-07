@@ -1,0 +1,20 @@
+# VPS override: SMTP reachable from the internet, admin UI only via VPN.
+# Activate with COMPOSE_FILE=docker-compose.yml:docker-compose.vps.yml in .env
+# (see docs/12-vps.md). Needs Docker Compose >= 2.24 for !override.
+services:
+  relay:
+    # No port 25 on the internet: only submission (587, STARTTLS) and SMTPS (465).
+    ports: !override
+      - "${SMTP_BIND_HOST:?SMTP_BIND_HOST must be the public IP}:${SMTP_SUBMISSION_PORT:-587}:2525"
+      - "${SMTP_BIND_HOST:?SMTP_BIND_HOST must be the public IP}:${SMTPS_BIND_PORT:-465}:2465"
+    environment:
+      SMTP_PUBLIC_MODE: "1"
+      # Let's Encrypt certificate, copied here by deploy/letsencrypt-deploy-hook.sh.
+      SMTP_TLS_CERT: /tls/cert.pem
+      SMTP_TLS_KEY: /tls/key.pem
+    volumes:
+      - ./smtp-tls:/tls:ro
+
+  ui:
+    environment:
+      SMTP_PUBLIC_MODE: "1"

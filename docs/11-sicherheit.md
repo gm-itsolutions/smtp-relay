@@ -5,7 +5,7 @@
 | Bereich | Umsetzung |
 |---|---|
 | Oberfläche | TOTP Pflicht; Sperre nach Fehlversuchen bei Passwort und TOTP; Sitzungen werden bei Abmelden, Passwortwechsel, TOTP-Reset und Deaktivieren beendet; Passwortwechsel beim ersten Login erzwungen; CSRF-Schutz, strikte CSP, sichere Cookies |
-| SMTP-Zugang | Konto je Gerät, an die IP gebunden; IP-Freigaben höchstens `/24`; Sperre nach Fehlanmeldungen |
+| SMTP-Zugang | Konto je Gerät, an die IP gebunden; IP-Freigaben höchstens `/24` (öffentlicher Modus: nur Einzeladressen); Sperre nach Fehlanmeldungen; Verbindungsgrenzen gesamt und je IP; Leerlauf-Timeout; Begrüßung ohne Softwareversion |
 | Absender | Globale Liste + *Allowed senders* je Konto/Freigabe; Header-From muss Absender entsprechen |
 | Transport | TLS immer an (STARTTLS, SMTPS), Anmeldung nur über TLS, mindestens TLS 1.2 |
 | Microsoft 365 | Zertifikat statt Secret; `Mail.Send` per RBAC nur für markierte Postfächer; keine tenantweite Zustimmung |
@@ -24,7 +24,8 @@
 
 - **Selbst signiertes Zertifikat:** schützt gegen Mitlesen, nicht gegen einen aktiven Angreifer im LAN, der sich als Relay ausgibt. Wo Geräte prüfen können: eigenes Zertifikat ([TLS](06-tls.md)).
 - ***Allow plain*** an IP-Freigaben: Mails dieses Geräts laufen unverschlüsselt durchs LAN. Nur für Altgeräte, dokumentieren.
-- **Alle Admins sind Vollverwalter:** Es gibt kein Rollenkonzept. Möglichst nur ein Admin-Zugang, Oberfläche nur über VPN.
+- **Alle Admins sind Vollverwalter:** Es gibt kein Rollenkonzept. Möglichst nur ein Admin-Zugang. Die Oberfläche nie öffentlich erreichbar machen – nur LAN bzw. VPN.
+- **Passwortprüfung bei SMTP-Anmeldung** blockiert kurz alle Verbindungen (bcrypt, synchron in aiosmtpd). Verbindungsgrenzen und Sperren begrenzen das; bei einem öffentlichen Relay mit sehr vielen Anmeldeversuchen spürbar.
 - **Archiv eingeschaltet:** Mailinhalte liegen unverschlüsselt auf der VM.
 - **Benachrichtigungen laufen über das Relay selbst:** Fällt es aus, kommt keine Warnmail – externes Monitoring einplanen.
 - **Gemeinsame Limits:** Alle Geräte einer Instanz teilen sich Rate Limit und die Exchange-Grenzen der Postfächer.

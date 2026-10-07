@@ -31,7 +31,7 @@ from common.models import (
     Settings,
     SmtpAccount,
 )
-from common.netutils import ip_matches_any
+from common.netutils import ip_matches_any, public_mode
 from common.passwords import DUMMY_PASSWORD_HASH, verify_password
 
 _log = logging.getLogger("relay.auth")
@@ -277,7 +277,7 @@ async def client_policy_refusal(
         allowed = _parse_sender_list(row.allowed_senders)
         if allowed and norm not in allowed:
             continue
-        if row.tls_required and not tls:
+        if (row.tls_required or public_mode()) and not tls:
             refusal = "tls"
             continue
         return None

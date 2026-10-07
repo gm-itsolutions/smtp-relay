@@ -26,7 +26,8 @@
     <input type="text" name="cidr" placeholder="10.0.0.0/24" required>
     <textarea name="allowed_senders" rows="2" placeholder="Allowed senders, one per line"></textarea>
     <input type="text" name="description" placeholder="Description (optional)">
-    <label class="small"><input type="checkbox" name="tls_required" value="true" checked> TLS required</label>
+    {% if public_mode() %}<input type="hidden" name="tls_required" value="true"><span class="small muted">TLS required (public mode)</span>
+    {% else %}<label class="small"><input type="checkbox" name="tls_required" value="true" checked> TLS required</label>{% endif %}
     <button type="submit" class="btn btn-primary">Add</button>
   </form>
 
@@ -61,6 +62,7 @@
             </button>
           </form>
           <a class="btn btn-small" href="/config/whitelist/{{ r.id }}/edit">Edit</a>
+          {% if not public_mode() or not r.tls_required %}
           <form method="post" action="/config/whitelist/{{ r.id }}/tls"
                 {% if r.tls_required %}data-confirm="Allow unencrypted SMTP from {{ r.cidr }}?"{% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -68,6 +70,7 @@
               {{ "Allow plain" if r.tls_required else "Require TLS" }}
             </button>
           </form>
+          {% endif %}
           <form method="post" action="/config/whitelist/{{ r.id }}/delete"
                 data-confirm="Delete {{ r.cidr }}?">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

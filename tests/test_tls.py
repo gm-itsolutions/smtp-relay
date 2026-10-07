@@ -39,6 +39,7 @@ def listeners(tmp_path, monkeypatch):
     from relay.tls import server_context
 
     monkeypatch.setenv("SMTP_TLS_DIR", str(tmp_path / "tls"))
+    monkeypatch.setenv("SMTP_TLS_HOSTNAME", "relay.kunde.de")
 
     async def _seed():
         async with session_scope() as s:
@@ -98,3 +99,31 @@ def test_whitelist_plain_refused_tls_accepted(listeners):
         c.starttls(context=_client_ctx())
         c.ehlo()
         assert c.mail("printer-a@kunde.de")[0] == 250
+
+
+def test_greeting_has_no_software_banner(listeners):
+    with smtplib.SMTP("127.0.0.1", listeners["port"]) as c:
+        code, msg = c.ehlo()
+        assert code == 250
+    sock = socket.create_connection(("127.0.0.1", listeners["port"]))
+    greeting = sock.recv(200).decode()
+    sock.close()
+    assert greeting.startswith("220 relay.kunde.de ESMTP")
+    assert "Python" not in greeting
+
+
+def test_connection_limit_per_ip(listeners, monkeypatch):
+    from relay.smtp_handler import CaseInsensitiveAuthSMTP
+
+    monkeypatch.setattr(CaseInsensitiveAuthSMTP, "max_connections_per_ip", 2)
+    held = [smtplib.SMTP("127.0.0.1", listeners["port"]) for _ in range(2)]
+    with pytest.raises(smtplib.SMTPConnectError) as exc:
+        smtplib.SMTP("127.0.0.1", listeners["port"])
+    assert exc.value.smtp_code == 421
+    held.pop().quit()
+    import time
+    time.sleep(0.3)  # let the server register the closed connection
+    with smtplib.SMTP("127.0.0.1", listeners["port"]) as c:
+        assert c.noop()[0] == 250
+    for c in held:
+        c.quit()

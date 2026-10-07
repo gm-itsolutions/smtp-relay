@@ -21,6 +21,7 @@ services:
       ADMIN_RESET: ${ADMIN_RESET:-0}
       ADMIN_NEW_PASSWORD: ${ADMIN_NEW_PASSWORD:-}
       APP_NAME: ${APP_NAME:-SMTP Relay}
+      SMTP_PUBLIC_MODE: ${SMTP_PUBLIC_MODE:-0}
       # Address uvicorn trusts X-Forwarded-For from: the nginx container's
       # pinned static IP (see the nginx service + network ipam below). Trusting
       # only the proxy — not '*' — prevents source-IP spoofing via a forged
@@ -71,6 +72,11 @@ services:
       SMTP_TLS_KEY: ${SMTP_TLS_KEY:-}
       SMTP_TLS_HOSTNAME: ${SMTP_TLS_HOSTNAME:-}
       SMTP_TLS_MIN_VERSION: ${SMTP_TLS_MIN_VERSION:-1.2}
+      # Internet-facing hardening (see docs/12-vps.md).
+      SMTP_PUBLIC_MODE: ${SMTP_PUBLIC_MODE:-0}
+      SMTP_MAX_CONNECTIONS: ${SMTP_MAX_CONNECTIONS:-100}
+      SMTP_MAX_CONNECTIONS_PER_IP: ${SMTP_MAX_CONNECTIONS_PER_IP:-10}
+      SMTP_IDLE_TIMEOUT: ${SMTP_IDLE_TIMEOUT:-120}
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
     volumes:

@@ -30,10 +30,15 @@
       Description
       <input type="text" name="description" value="{{ row.description or '' }}">
     </label>
+    {% if public_mode() %}
+    <input type="hidden" name="tls_required" value="true">
+    <p class="small muted">TLS required (public mode: plain SMTP is not allowed).</p>
+    {% else %}
     <label>
       <input type="checkbox" name="tls_required" value="true" {% if row.tls_required %}checked{% endif %}>
       TLS required (untick only for legacy devices that cannot do TLS)
     </label>
+    {% endif %}
     <div class="row-actions">
       <button type="submit" class="btn btn-primary">Save</button>
       <a class="btn" href="/config/whitelist">Cancel</a>

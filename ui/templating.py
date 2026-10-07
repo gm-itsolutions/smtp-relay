@@ -16,6 +16,7 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from common.netutils import public_mode
 from common.resources import resource_path
 
 from .config import get_settings
@@ -74,6 +75,7 @@ def _pretty_json(value: Any) -> str:
 _env.filters["dt"] = _fmt_dt
 _env.filters["bytes"] = _fmt_bytes
 _env.filters["pretty_json"] = _pretty_json
+_env.globals["public_mode"] = public_mode  # SMTP_PUBLIC_MODE, see common.netutils
 
 
 # -----------------------------------------------------------------------------

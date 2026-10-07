@@ -28,6 +28,7 @@ from common.constants import (
     AUDIT_RETENTION_MIN_DAYS,
 )
 from common.db import session_scope
+from common.netutils import public_mode
 from common.routing import resolve_route
 from common.models import (
     AuditEventType,
@@ -298,7 +299,7 @@ async def whitelist_add(
                 IpWhitelistEntry(
                     cidr=data.cidr,
                     allowed_senders=data.allowed_senders,
-                    tls_required=tls_required,
+                    tls_required=tls_required or public_mode(),
                     description=data.description or None,
                     is_enabled=True,
                 )
@@ -357,7 +358,7 @@ async def whitelist_toggle_tls(
         row = await s.get(IpWhitelistEntry, row_id)
         if row is None:
             raise HTTPException(status_code=404)
-        row.tls_required = not row.tls_required
+        row.tls_required = (not row.tls_required) or public_mode()
         await audit_config_change(
             s, session, request,
             details={
@@ -417,7 +418,7 @@ async def whitelist_edit_save(
             )
         row.description = data.description or None
         row.allowed_senders = data.allowed_senders
-        row.tls_required = tls_required
+        row.tls_required = tls_required or public_mode()
         await audit_config_change(
             s, session, request,
             details={

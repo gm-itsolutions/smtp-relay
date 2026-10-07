@@ -21,6 +21,7 @@ import asyncio
 import concurrent.futures
 import logging
 import os
+import threading
 from typing import Any
 
 from aiosmtpd.smtp import (
@@ -44,6 +45,49 @@ class CaseInsensitiveAuthSMTP(SMTP):
     Workaround: normalise the mechanism portion of the AUTH command
     to uppercase before delegating to the parent implementation.
     """
+
+    # Concurrent-connection caps, shared by both listeners (each runs its own
+    # thread + loop, hence the lock). Excess connections get 421 and are closed.
+    max_connections = int(os.environ.get("SMTP_MAX_CONNECTIONS", "100"))
+    max_connections_per_ip = int(os.environ.get("SMTP_MAX_CONNECTIONS_PER_IP", "10"))
+    _conn_lock = threading.Lock()
+    _conn_per_ip: dict[str, int] = {}
+    _conn_ip: str | None = None
+    _conn_rejected = False
+
+    def connection_made(self, transport):  # type: ignore[override]
+        # Called again after STARTTLS (then _original_transport is set): count once.
+        if self._original_transport is None:
+            peer = transport.get_extra_info("peername") or ("",)
+            ip = peer[0]
+            cls = CaseInsensitiveAuthSMTP
+            with cls._conn_lock:
+                total = sum(cls._conn_per_ip.values())
+                if total >= self.max_connections or cls._conn_per_ip.get(ip, 0) >= self.max_connections_per_ip:
+                    self._conn_rejected = True
+                else:
+                    cls._conn_per_ip[ip] = cls._conn_per_ip.get(ip, 0) + 1
+                    self._conn_ip = ip
+            if self._conn_rejected:
+                _log.warning("Connection limit reached, refusing %s", ip)
+                transport.write(b"421 4.7.0 Too many connections, try again later\r\n")
+                transport.close()
+                return
+        super().connection_made(transport)
+
+    def connection_lost(self, error):  # type: ignore[override]
+        if self._conn_ip is not None:
+            cls = CaseInsensitiveAuthSMTP
+            with cls._conn_lock:
+                left = cls._conn_per_ip.get(self._conn_ip, 1) - 1
+                if left > 0:
+                    cls._conn_per_ip[self._conn_ip] = left
+                else:
+                    cls._conn_per_ip.pop(self._conn_ip, None)
+            self._conn_ip = None
+        if self._conn_rejected:
+            return
+        super().connection_lost(error)
 
     # True for the SMTPS listener: the socket is TLS from the first byte.
     # aiosmtpd only knows STARTTLS (`_tls_protocol`), so without this flag it
