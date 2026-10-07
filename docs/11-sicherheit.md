@@ -24,7 +24,7 @@
 
 - **Selbst signiertes Zertifikat:** schützt gegen Mitlesen, nicht gegen einen aktiven Angreifer im LAN, der sich als Relay ausgibt. Wo Geräte prüfen können: eigenes Zertifikat ([TLS](06-tls.md)).
 - ***Allow plain*** an IP-Freigaben: Mails dieses Geräts laufen unverschlüsselt durchs LAN. Nur für Altgeräte, dokumentieren.
-- **Alle Admins sind Vollverwalter:** Es gibt kein Rollenkonzept. Möglichst nur ein Admin-Zugang. Die Oberfläche nie öffentlich erreichbar machen – nur LAN bzw. VPN.
+- **Alle Admins sind Vollverwalter:** Es gibt kein Rollenkonzept. Möglichst nur ein Admin-Zugang. Im Kundennetz die Oberfläche nur aus dem LAN bzw. über VPN erreichbar machen. Auf dem VPS ist sie öffentlich und hängt allein an Passwort + TOTP ([VPS](12-vps.md#die-öffentliche-oberfläche)).
 - **Passwortprüfung bei SMTP-Anmeldung** blockiert kurz alle Verbindungen (bcrypt, synchron in aiosmtpd). Verbindungsgrenzen und Sperren begrenzen das; bei einem öffentlichen Relay mit sehr vielen Anmeldeversuchen spürbar.
 - **Archiv eingeschaltet:** Mailinhalte liegen unverschlüsselt auf der VM.
 - **Benachrichtigungen laufen über das Relay selbst:** Fällt es aus, kommt keine Warnmail – externes Monitoring einplanen.

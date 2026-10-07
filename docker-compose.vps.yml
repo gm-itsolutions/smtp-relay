@@ -1,4 +1,4 @@
-# VPS override: SMTP reachable from the internet, admin UI only via VPN.
+# VPS override: SMTP and the admin UI reachable from the internet.
 # Activate with COMPOSE_FILE=docker-compose.yml:docker-compose.vps.yml in .env
 # (see docs/12-vps.md). Needs Docker Compose >= 2.24 for !override.
 services:
@@ -18,3 +18,11 @@ services:
   ui:
     environment:
       SMTP_PUBLIC_MODE: "1"
+
+  nginx:
+    # HTTPS only; port 80 stays free for certbot (HTTP-01 challenge).
+    ports: !override
+      - "${HTTPS_BIND_HOST:?HTTPS_BIND_HOST must be the public IP}:${HTTPS_PORT:-443}:8443"
+    # Same Let's Encrypt certificate, copy owned by the nginx user (uid 101).
+    volumes: !override
+      - ./smtp-tls/nginx:/etc/nginx/certs:ro

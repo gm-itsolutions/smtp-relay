@@ -26,7 +26,7 @@ Alle Daten (Datenbank, TLS-Zertifikat, optional Archiv) liegen im Docker-Volume 
 
 | Schicht | Begrenzt | Wie |
 |---|---|---|
-| 1. Netz | Wer das Relay erreicht | SMTP nur auf der LAN-IP, Firewall nur für Geräte-IPs, Oberfläche nur aus dem LAN bzw. über VPN, nie öffentlich |
+| 1. Netz | Wer das Relay erreicht | SMTP nur auf der LAN-IP, Firewall nur für Geräte-IPs, Oberfläche im Kundennetz nur aus dem LAN bzw. über VPN (VPS: öffentlich mit Passwort + TOTP) |
 | 2. Zugang je Gerät | Welches Gerät senden darf | SMTP-Konto mit Passwort **und** an die Geräte-IP gebunden – oder IP-Freigabe für Geräte ohne Anmeldung |
 | 3. Absender je Gerät | Als welche Adresse dieses Gerät senden darf | *Allowed senders* je Konto/Freigabe, globale Absenderliste, Header-From = Absender |
 | 4. Microsoft 365 | Als welche Postfächer die App überhaupt senden darf | RBAC for Applications: `Mail.Send` nur für markierte Geräte-Postfächer |

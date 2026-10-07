@@ -15,6 +15,6 @@ Anleitungen nach Themen. Für die Ersteinrichtung der Reihe nach durchgehen (1 �
 | 9 | [Tests und Abnahme](09-tests.md) | Checkliste vor dem Produktivbetrieb |
 | 10 | [Fehlersuche](10-fehlersuche.md) | Meldungen und ihre Ursachen |
 | 11 | [Sicherheit](11-sicherheit.md) | Schutzmechanismen, Schlüssel, Restrisiken |
-| 12 | [Öffentlich auf einem VPS](12-vps.md) | Relay ohne Kundenserver: öffentliche SMTP-Ports, Let's Encrypt, Oberfläche über WireGuard |
+| 12 | [Öffentlich auf einem VPS](12-vps.md) | Relay ohne Kundenserver: öffentliche SMTP-Ports und Oberfläche, Let's Encrypt |
 
 Beispielwerte in allen Seiten: Domain `kunde.de`, Relay `192.168.10.40` (DNS `smtp-relay.kunde.local`), App `smtp-relay-kunde`, Exchange-Scope `smtp-relay-absender` über `CustomAttribute10 = "smtp-relay"`.

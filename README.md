@@ -13,7 +13,7 @@ Geräte ──SMTP mit TLS (465 / 587 / 25)──▶ smtp-relay ──Graph send
 - **Oberfläche:** TOTP Pflicht, Sperre nach Fehlversuchen, widerrufbare Sitzungen
 - **Je Gerät:** eigenes Konto (an die IP gebunden) oder IP-Freigabe, jeweils nur mit dem eigenen Absender; Header-From muss stimmen
 - **TLS immer an:** STARTTLS auf 25/587, SMTPS auf 465, Anmeldung nur verschlüsselt
-- **Öffentlich betreibbar:** VPS-Variante mit Let's Encrypt, Verbindungsgrenzen, öffentlichem Modus; Oberfläche bleibt im VPN
+- **Öffentlich betreibbar:** VPS-Variante mit Let's Encrypt, Verbindungsgrenzen und öffentlichem Modus
 - **Microsoft 365:** `Mail.Send` per RBAC nur für die Geräte-Postfächer
 - **Datenschutz:** kein Mailarchiv im Standard
 - **Container:** ohne root, read-only, lokal aus dem Quellcode gebaut; automatische Tests bei jedem Push
