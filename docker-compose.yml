@@ -89,7 +89,7 @@ services:
     depends_on:
       - ui
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 2525), 3)"]
+      test: ["CMD", "python", "-c", "import socket; [socket.create_connection(('127.0.0.1', p), 3) for p in (2525, 2465)]"]
       interval: 60s
       timeout: 5s
       retries: 3

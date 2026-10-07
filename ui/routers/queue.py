@@ -172,6 +172,9 @@ async def retry_one(
         row = await s.get(MailQueue, row_id)
         if row is None:
             raise HTTPException(status_code=404)
+        # Only undelivered rows: requeuing a SENT row would deliver it twice.
+        if row.status not in (MailStatus.DEAD, MailStatus.FAILED, MailStatus.PENDING):
+            return RedirectResponse(f"/queue/{int(row_id)}", status_code=303)
         row.status = MailStatus.PENDING
         row.next_attempt_at = _utcnow()
         row.last_error = None

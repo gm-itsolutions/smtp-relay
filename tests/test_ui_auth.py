@@ -152,3 +152,25 @@ def test_must_change_password_is_enforced(client):
     r = client.get("/dashboard", follow_redirects=False)
     assert r.headers["location"] == "/account/password"
     assert client.get("/account/password", follow_redirects=False).status_code == 200
+
+
+def test_sent_mail_cannot_be_retried(client):
+    # A retried SENT row would be delivered twice (or empty, archive off).
+    from common.models import MailQueue, MailStatus
+
+    _make_user(enrolled=True)
+    _login_full(client)
+
+    async def _row():
+        async with session_scope() as s:
+            s.add(MailQueue(sender="a@kunde.de", recipients_json='["b@kunde.de"]',
+                            raw_mime_b64="", status=MailStatus.SENT))
+
+    run(_row())
+    client.post("/queue/1/retry", data={"csrf_token": client.cookies.get("smtprelay_csrf")})
+
+    async def _status():
+        async with session_scope() as s:
+            return (await s.get(MailQueue, 1)).status
+
+    assert run(_status()) == MailStatus.SENT
