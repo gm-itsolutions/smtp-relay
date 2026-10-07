@@ -11,7 +11,7 @@
     <code>AUTH</code>. Accepts single IPs (e.g. <code>10.1.2.3</code>)
     and networks up to <code>/24</code> (IPv6 <code>/64</code>). Prefer
     single hosts and an SMTP account wherever the device supports AUTH.
-    Allowed senders: comma-separated; empty = any authorised sender.
+    Allowed senders: one address per line; empty = any authorised sender.
     <strong>TLS:</strong> required by default (STARTTLS on port 25/587 or
     SMTPS on 465). Allow plain SMTP only for legacy devices that cannot do
     TLS. Devices with an SMTP account always use TLS.
@@ -24,7 +24,7 @@
   <form method="post" action="/config/whitelist" class="inline-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="text" name="cidr" placeholder="10.0.0.0/24" required>
-    <input type="text" name="allowed_senders" placeholder="Allowed senders (comma-separated)">
+    <textarea name="allowed_senders" rows="2" placeholder="Allowed senders, one per line"></textarea>
     <input type="text" name="description" placeholder="Description (optional)">
     <label class="small"><input type="checkbox" name="tls_required" value="true" checked> TLS required</label>
     <button type="submit" class="btn btn-primary">Add</button>
@@ -60,6 +60,7 @@
               {{ "Disable" if r.is_enabled else "Enable" }}
             </button>
           </form>
+          <a class="btn btn-small" href="/config/whitelist/{{ r.id }}/edit">Edit</a>
           <form method="post" action="/config/whitelist/{{ r.id }}/tls"
                 {% if r.tls_required %}data-confirm="Allow unencrypted SMTP from {{ r.cidr }}?"{% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

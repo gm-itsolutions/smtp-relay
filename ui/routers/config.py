@@ -370,6 +370,67 @@ async def whitelist_toggle_tls(
     return RedirectResponse("/config/whitelist", status_code=303)
 
 
+@router.get("/whitelist/{row_id}/edit", include_in_schema=False)
+async def whitelist_edit_view(
+    row_id: int,
+    request: Request,
+    session: SessionPayload = Depends(require_user),
+):
+    async with session_scope() as s:
+        row = await s.get(IpWhitelistEntry, row_id)
+        if row is None:
+            raise HTTPException(status_code=404)
+    return render(
+        request,
+        "config_whitelist_edit.html",
+        {"session": session, "row": row, "error": None},
+    )
+
+
+@router.post(
+    "/whitelist/{row_id}/edit",
+    include_in_schema=False,
+    dependencies=[Depends(require_csrf), Depends(require_user)],
+)
+async def whitelist_edit_save(
+    row_id: int,
+    request: Request,
+    description: str = Form(""),
+    allowed_senders: str = Form(""),
+    tls_required: bool = Form(False),
+    session: SessionPayload = Depends(require_user),
+):
+    async with session_scope() as s:
+        row = await s.get(IpWhitelistEntry, row_id)
+        if row is None:
+            raise HTTPException(status_code=404)
+        try:
+            data: CidrIn = cidr_form(
+                cidr=row.cidr, description=description, allowed_senders=allowed_senders
+            )
+        except ValidationError as exc:
+            return render(
+                request,
+                "config_whitelist_edit.html",
+                {"session": session, "row": row, "error": _first_error(exc)},
+                status_code=400,
+            )
+        row.description = data.description or None
+        row.allowed_senders = data.allowed_senders
+        row.tls_required = tls_required
+        await audit_config_change(
+            s, session, request,
+            details={
+                "section": "whitelist",
+                "action": "edit",
+                "cidr": row.cidr,
+                "allowed_senders": data.allowed_senders.splitlines(),
+                "tls_required": tls_required,
+            },
+        )
+    return RedirectResponse("/config/whitelist", status_code=303)
+
+
 @router.post(
     "/whitelist/{row_id}/delete",
     include_in_schema=False,

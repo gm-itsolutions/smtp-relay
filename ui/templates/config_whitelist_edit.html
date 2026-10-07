@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ row.cidr }} — Config{% endblock %}
+{% block content %}
+<h1>Configuration</h1>
+{% with active='whitelist' %}{% include "_confignav.html" %}{% endwith %}
+
+<h2>Edit whitelist entry</h2>
+
+<section class="card card-narrow">
+  <p class="small muted">
+    The address cannot be changed. Delete and re-create the entry to use
+    another IP or network.
+  </p>
+
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <form method="post" action="/config/whitelist/{{ row.id }}/edit" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      IP / CIDR
+      <input type="text" value="{{ row.cidr }}" disabled>
+    </label>
+    <label>
+      Allowed senders
+      <textarea name="allowed_senders" rows="4"
+                placeholder="usv@example.com">{{ row.allowed_senders or '' }}</textarea>
+      <span class="small">One address per line. MAIL FROM must be one of these (and on the authorised-sender list). Empty = any authorised sender.</span>
+    </label>
+    <label>
+      Description
+      <input type="text" name="description" value="{{ row.description or '' }}">
+    </label>
+    <label>
+      <input type="checkbox" name="tls_required" value="true" {% if row.tls_required %}checked{% endif %}>
+      TLS required (untick only for legacy devices that cannot do TLS)
+    </label>
+    <div class="row-actions">
+      <button type="submit" class="btn btn-primary">Save</button>
+      <a class="btn" href="/config/whitelist">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

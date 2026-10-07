@@ -174,3 +174,35 @@ def test_sent_mail_cannot_be_retried(client):
             return (await s.get(MailQueue, 1)).status
 
     assert run(_status()) == MailStatus.SENT
+
+
+def test_whitelist_entry_can_be_edited(client):
+    from common.models import IpWhitelistEntry
+
+    _make_user(enrolled=True)
+    _login_full(client)
+
+    async def _row():
+        async with session_scope() as s:
+            s.add(IpWhitelistEntry(cidr="192.168.20.5/32", allowed_senders="usv@kunde.de"))
+
+    run(_row())
+    assert client.get("/config/whitelist/1/edit").status_code == 200
+    r = client.post(
+        "/config/whitelist/1/edit",
+        data={
+            "csrf_token": client.cookies.get("smtprelay_csrf"),
+            "allowed_senders": "usv@kunde.de\nUSV2@kunde.de",
+            "description": "USV",
+        },
+        follow_redirects=False,
+    )
+    assert r.headers["location"] == "/config/whitelist"
+
+    async def _get():
+        async with session_scope() as s:
+            return await s.get(IpWhitelistEntry, 1)
+
+    row = run(_get())
+    assert row.allowed_senders == "usv@kunde.de\nusv2@kunde.de"
+    assert row.tls_required is False  # checkbox not sent = unticked
