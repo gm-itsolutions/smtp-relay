@@ -36,6 +36,7 @@ from common.models import (
 )
 
 from .queue_manager import QueueWorker, prune_sent, recover_orphaned_sending
+from .tls import server_context
 from .smtp_handler import (
     CaseInsensitiveAuthSMTP,
     RelayAuthenticator,
@@ -58,28 +59,6 @@ def _configure_logging() -> None:
     )
     # aiosmtpd is chatty at DEBUG; keep it at the user-requested level.
     # (It masks AUTH arguments itself: ">> b'AUTH PLAIN ********'".)
-
-
-def _tls_kwargs() -> dict:
-    """Optional STARTTLS for the SMTP listener.
-
-    SMTP_TLS_CERT / SMTP_TLS_KEY: PEM files; when set, STARTTLS is offered.
-    SMTP_AUTH_REQUIRE_TLS=1: refuse AUTH before STARTTLS (plain-text
-    passwords never cross the LAN). Off by default because many printers
-    cannot do STARTTLS.
-    """
-    import ssl
-
-    cert = os.environ.get("SMTP_TLS_CERT", "").strip()
-    key = os.environ.get("SMTP_TLS_KEY", "").strip()
-    require = os.environ.get("SMTP_AUTH_REQUIRE_TLS", "0") == "1"
-    if not (cert and key):
-        if require:
-            raise RuntimeError("SMTP_AUTH_REQUIRE_TLS=1 needs SMTP_TLS_CERT and SMTP_TLS_KEY.")
-        return {"auth_require_tls": False}
-    ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-    ctx.load_cert_chain(cert, key)
-    return {"tls_context": ctx, "auth_require_tls": require}
 
 
 # -----------------------------------------------------------------------------
@@ -256,6 +235,38 @@ async def _pruner_loop(stop: asyncio.Event) -> None:
 # Main
 # -----------------------------------------------------------------------------
 
+def build_listeners(handler, authenticator, controller_kwargs: dict, tls_ctx):
+    """Two aiosmtpd controllers sharing one handler and TLS context.
+
+    - port: plain + STARTTLS (host 25/587); TLS is enforced per client in
+      handle_MAIL, AUTH only after STARTTLS.
+    - smtps_port: implicit TLS (host 465).
+    """
+
+    # Our SMTP subclass: case-insensitive AUTH mechanism parsing (Windows
+    # clients send `AUTH login`) and implicit-TLS awareness for SMTPS.
+    class _Controller(Controller):
+        def factory(self):
+            smtp = CaseInsensitiveAuthSMTP(self.handler, **self.SMTP_kwargs)
+            if self.ssl_context is not None:
+                smtp.implicit_tls = True
+                smtp._auth_require_tls = False  # whole connection is TLS
+            return smtp
+
+    listener_kwargs = dict(
+        hostname=controller_kwargs["hostname"],
+        authenticator=authenticator,
+        auth_required=False,  # whitelisted IPs skip AUTH; we gate in handlers
+        auth_require_tls=True,  # passwords only over TLS
+        # Reject oversized DATA while reading, not after buffering it all.
+        data_size_limit=controller_kwargs["max_size"],
+    )
+    return (
+        _Controller(handler, port=controller_kwargs["port"], tls_context=tls_ctx, **listener_kwargs),
+        _Controller(handler, port=controller_kwargs["smtps_port"], ssl_context=tls_ctx, **listener_kwargs),
+    )
+
+
 async def _run() -> None:
     _configure_logging()
     started_at = _utcnow()
@@ -283,29 +294,16 @@ async def _run() -> None:
     authenticator = RelayAuthenticator()
     controller_kwargs = build_controller_kwargs()
 
-    # Custom Controller that instantiates our SMTP subclass
-    # (case-insensitive AUTH mechanism parsing). Without this, Windows
-    # clients that send `AUTH login ...` (lowercase) get a 504 from
-    # aiosmtpd 1.4.6 because its mechanism lookup is case-sensitive.
-    class _Controller(Controller):
-        def factory(self):
-            return CaseInsensitiveAuthSMTP(self.handler, **self.SMTP_kwargs)
-
-    controller = _Controller(
-        handler,
-        hostname=controller_kwargs["hostname"],
-        port=controller_kwargs["port"],
-        authenticator=authenticator,
-        auth_required=False,  # whitelisted IPs skip AUTH; we gate in handlers
-        # Reject oversized DATA while reading, not after buffering it all.
-        data_size_limit=controller_kwargs["max_size"],
-        **_tls_kwargs(),
+    controller, smtps_controller = build_listeners(
+        handler, authenticator, controller_kwargs, server_context()
     )
     controller.start()
+    smtps_controller.start()
     _log.info(
-        "SMTP listener on %s:%s (max message size %d bytes)",
-        controller_kwargs["hostname"],
+        "SMTP listeners on %s: %s (STARTTLS), %s (SMTPS); max message size %d bytes",
+        controller_kwargs["hostname"] or "*",
         controller_kwargs["port"],
+        controller_kwargs["smtps_port"],
         controller_kwargs["max_size"],
     )
 
@@ -334,6 +332,7 @@ async def _run() -> None:
         # Controller.stop is synchronous; run it in a thread so we don't
         # block the event loop while asyncio is unwinding.
         await asyncio.to_thread(controller.stop)
+        await asyncio.to_thread(smtps_controller.stop)
         await worker.stop()
         hb_task.cancel()
         prune_task.cancel()

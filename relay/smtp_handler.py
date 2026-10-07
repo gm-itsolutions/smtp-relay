@@ -45,6 +45,11 @@ class CaseInsensitiveAuthSMTP(SMTP):
     to uppercase before delegating to the parent implementation.
     """
 
+    # True for the SMTPS listener: the socket is TLS from the first byte.
+    # aiosmtpd only knows STARTTLS (`_tls_protocol`), so without this flag it
+    # would refuse AUTH on an already encrypted connection.
+    implicit_tls = False
+
     async def smtp_AUTH(self, arg):  # type: ignore[override]
         if arg:
             parts = arg.split(None, 1)
@@ -58,7 +63,7 @@ from common.models import AuditEventType, AuditOutcome
 from common.routing import account_may_use_app, resolve_route
 
 from .auth import (
-    client_may_use_sender,
+    client_policy_refusal,
     ip_or_user_banned,
     is_ip_whitelisted,
     is_sender_authorised,
@@ -155,6 +160,10 @@ async def _async_auth_check(ip: str | None, username: str, password: str):
     return await verify_smtp_credentials(username, password, ip)
 
 
+def connection_is_tls(server: SMTP) -> bool:
+    return bool(getattr(server, "_tls_protocol", None)) or getattr(server, "implicit_tls", False)
+
+
 def header_from_matches(raw: bytes, mail_from: str) -> bool:
     """True iff the message has exactly one From address equal to MAIL FROM.
 
@@ -227,10 +236,17 @@ class RelayHandler:
             return "530 5.7.0 Authentication required"
 
         refusal = None
+        policy = None
         if not await is_sender_authorised(address):
             refusal = "sender not authorised"
-        elif not await client_may_use_sender(username, ip, address):
-            refusal = "sender not allowed for this client"
+        else:
+            policy = await client_policy_refusal(
+                username, ip, address, connection_is_tls(server)
+            )
+            if policy == "tls":
+                refusal = "TLS required for this client"
+            elif policy:
+                refusal = "sender not allowed for this client"
         if refusal:
             async with session_scope() as s:
                 await audit_record(
@@ -241,6 +257,8 @@ class RelayHandler:
                     username=username,
                     details={"reason": refusal, "sender": address},
                 )
+            if policy == "tls":
+                return "530 5.7.0 Must issue a STARTTLS command first"
             return "550 5.7.1 Sender not authorized"
 
         # Pick the enterprise app now, so a sender that cannot be routed (or
@@ -404,9 +422,11 @@ def build_controller_kwargs() -> dict[str, Any]:
     if host in ("0.0.0.0", "::", "*"):  # nosec B104 - intentional all-interfaces bind
         host = ""
     port = int(os.environ.get("SMTP_LISTEN_PORT", "2525"))
+    smtps_port = int(os.environ.get("SMTPS_LISTEN_PORT", "2465"))
     max_size = int(os.environ.get("SMTP_MAX_MESSAGE_SIZE", "31457280"))
     return {
         "hostname": host,
         "port": port,
+        "smtps_port": smtps_port,
         "max_size": max_size,
     }

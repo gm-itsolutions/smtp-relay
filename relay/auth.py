@@ -243,14 +243,17 @@ def _parse_sender_list(text: str) -> set[str]:
     return {a.strip().lower() for a in (text or "").replace(",", "\n").splitlines() if a.strip()}
 
 
-async def client_may_use_sender(
-    username: str | None, source_ip: str | None, sender: str
-) -> bool:
-    """Per-client sender binding on top of the global authorised-sender list.
+async def client_policy_refusal(
+    username: str | None, source_ip: str | None, sender: str, tls: bool
+) -> str | None:
+    """Per-client rules on top of the global authorised-sender list.
+
+    Returns None when the client may send as `sender`, else "sender" or "tls".
 
     Authenticated: the account's `allowed_senders` (empty = no extra limit).
-    Whitelisted: every enabled whitelist entry matching the IP; the sender is
-    allowed if any matching entry has no list or lists the sender.
+    TLS is guaranteed for accounts (AUTH is only offered over TLS).
+    Whitelisted: every enabled entry matching the IP; allowed if one entry
+    permits the sender (empty list = any) and its TLS rule is met.
     """
     norm = (sender or "").strip().lower()
     async with session_scope() as session:
@@ -259,20 +262,26 @@ async def client_may_use_sender(
                 select(SmtpAccount).where(SmtpAccount.username == username)
             )
             if account is None:
-                return False
+                return "sender"
             allowed = _parse_sender_list(account.allowed_senders)
-            return not allowed or norm in allowed
+            return None if not allowed or norm in allowed else "sender"
         rows = (
             await session.scalars(
                 select(IpWhitelistEntry).where(IpWhitelistEntry.is_enabled.is_(True))
             )
         ).all()
+    refusal = "sender"
     for row in rows:
-        if source_ip and ip_matches_any(source_ip, [row.cidr]):
-            allowed = _parse_sender_list(row.allowed_senders)
-            if not allowed or norm in allowed:
-                return True
-    return False
+        if not (source_ip and ip_matches_any(source_ip, [row.cidr])):
+            continue
+        allowed = _parse_sender_list(row.allowed_senders)
+        if allowed and norm not in allowed:
+            continue
+        if row.tls_required and not tls:
+            refusal = "tls"
+            continue
+        return None
+    return refusal
 
 
 def _parse_cidr_list(text: str) -> list[str]:

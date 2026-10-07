@@ -11,7 +11,7 @@ An on-premise SMTP relay that lets your applications and devices send email thro
 > - **Header From must equal MAIL FROM** (no display spoofing).
 > - **Whitelist width:** entries wider than `/24` (IPv6 `/64`) are refused.
 > - **Data minimisation:** `ARCHIVE_ENABLED=0` keeps no copy of delivered mail; DEAD queue rows are pruned with the sent-row retention.
-> - **SMTP hardening:** size limit enforced while reading DATA; optional STARTTLS (`SMTP_TLS_CERT`/`SMTP_TLS_KEY`, `SMTP_AUTH_REQUIRE_TLS`).
+> - **TLS always on:** STARTTLS on 25/587 and SMTPS on 465; self-signed certificate generated on first start (or your own). SMTP accounts authenticate only over TLS; whitelist entries require TLS unless explicitly allowed plain (legacy devices). Size limit enforced while reading DATA.
 > - **Deployment:** images are built locally from this checkout (no third-party registry, no `:latest`); relay healthcheck; Windows variant removed; Dependabot also for pip; CI runs the tests.
 > - **Entra:** use RBAC for Applications to scope `Mail.Send` to the device mailboxes (see below) instead of tenant-wide consent.
 
@@ -33,7 +33,7 @@ Three Docker containers, built locally from this repository:
 
 | Service | Role |
 |---------|------|
-| `relay` | Accepts SMTP connections on your LAN (port 2525), queues messages, forwards them to Microsoft 365 via Graph API |
+| `relay` | Accepts SMTP connections on your LAN (25/587 STARTTLS, 465 SMTPS), queues messages, forwards them to Microsoft 365 via Graph API |
 | `ui` | Web-based admin panel |
 | `nginx` | TLS termination and reverse proxy for the UI |
 
@@ -89,14 +89,14 @@ Sending from more than one Microsoft 365 tenant? See [Multiple tenants](#multipl
 
 Two modes available under *Config → Settings* (at least one must be enabled):
 
-- **Local credentials** — create SMTP accounts under *Config → SMTP accounts* and configure your devices with those credentials.
-- **IP whitelist** — add trusted hosts (at most `/24`); devices from those IPs can send without credentials.
+- **Local credentials** — create SMTP accounts under *Config → SMTP accounts* and configure your devices with those credentials. Always over TLS (password never in clear text).
+- **IP whitelist** — add trusted hosts (at most `/24`); devices from those IPs can send without credentials. TLS is required per entry by default; switch it off (*Allow plain*) only for legacy devices that cannot do TLS.
 
 Prefer one SMTP account per device, bound to the device IP (*Allowed source IPs* `/32`) and to its own mailbox (*Allowed senders*). Use whitelist entries only for devices that cannot authenticate, and give them *Allowed senders* too.
 
 ### 6. Send a test message
 
-Point an SMTP client on your LAN at `<your-server-ip>:2525` and send a test email. Watch it move through *Queue* (`pending → sending → sent`) and appear under *Archive*.
+Point an SMTP client on your LAN at `<your-server-ip>` — port 465 with SSL/TLS, or port 25/587 with STARTTLS — and send a test email. Watch it move through *Queue* (`pending → sending → sent`) and appear under *Archive*.
 
 ---
 
@@ -237,15 +237,18 @@ One device = one mailbox = one SMTP account (or one whitelist entry).
      - with several enterprise apps: *Only the apps selected below* → the app
        of this tenant
    - **Device cannot authenticate:** *Config → IP whitelist* → add
-     `192.168.10.30` with *Allowed senders* `nas@contoso.com`. Make sure the
+     `192.168.10.30` with *Allowed senders* `nas@contoso.com`, *TLS required*
+     ticked (untick only if the device cannot do TLS at all). Make sure the
      whitelist mode is enabled under *Config → Settings*.
-4. **Firewall:** allow TCP 25 (or your `SMTP_BIND_PORT`) from the device IP to
+4. **Firewall:** allow TCP 465 (and/or 587/25) from the device IP to
    `192.168.10.40`, if a firewall sits between them.
-5. **Device settings:** SMTP server `192.168.10.40`, port `SMTP_BIND_PORT`,
-   no SSL/TLS (STARTTLS only if configured, see [Hardening](#hardening)),
+5. **Device settings:** SMTP server `192.168.10.40`, **port 465 with
+   SSL/TLS** (preferred) or port 25/587 with STARTTLS, certificate
+   verification off (or import the relay certificate, see [TLS](#tls)),
    username/password from step 3 (or none for whitelist), **sender address
    exactly `nas@contoso.com`** — the header From must equal the envelope
-   sender.
+   sender. A legacy device without TLS: whitelist entry with *Allow plain*,
+   port 25, no encryption.
 6. **Test:** send a test mail from the device, then check *Queue*
    (`sent`) and the *Audit log* (`smtp_relay_ok`, with the real device IP
    — not a `172.28.0.x` Docker address).
@@ -255,6 +258,8 @@ Typical refusals (reason in the *Audit log*):
 | Device sees | Audit reason | Fix |
 |---|---|---|
 | `530 Authentication required` | — | Account missing on the device, or IP not whitelisted |
+| `538 Encryption required` | — | Device tries AUTH without TLS: use port 465 (SSL/TLS) or enable STARTTLS |
+| `530 Must issue a STARTTLS command first` | `TLS required for this client` | Whitelisted device sends unencrypted: enable TLS on the device, or *Allow plain* on its entry |
 | `535 Authentication failed` | `ip_not_allowed_for_user` / invalid credentials | Wrong password or device IP not in *Allowed source IPs* |
 | `550 Sender not authorized` at `MAIL FROM` | `sender not authorised` | Address missing under *Authorised senders* |
 | `550 Sender not authorized` at `MAIL FROM` | `sender not allowed for this client` | Address missing in the account's / whitelist entry's *Allowed senders* |
@@ -367,7 +372,19 @@ If you lose the admin password or TOTP device:
 
 **Network:** bind SMTP to a specific interface with `SMTP_BIND_HOST=<LAN-IP>` in `.env` — ports published by Docker bypass host firewalls such as ufw. Keep the UI behind a VPN (`HTTP(S)_BIND_HOST=<VPN-IP>`) — it is not designed to be internet-facing.
 
-**STARTTLS for devices:** place `cert.pem`/`key.pem` in `./smtp-tls` (readable by uid 1000), uncomment the volume in `docker-compose.yml`, and set `SMTP_TLS_CERT=/tls/cert.pem`, `SMTP_TLS_KEY=/tls/key.pem`. With `SMTP_AUTH_REQUIRE_TLS=1` passwords are only accepted after STARTTLS.
+### TLS
+
+TLS is part of the base setup and cannot be switched off:
+
+| Host port | Mode | Device setting usually called |
+|---|---|---|
+| 465 (`SMTPS_BIND_PORT`) | SMTPS — encrypted from the first byte | "SSL/TLS", "SSL" |
+| 587 (`SMTP_SUBMISSION_PORT`), 25 (`SMTP_BIND_PORT`) | plain, upgraded with STARTTLS | "STARTTLS", "TLS" |
+
+- **SMTP accounts** can only authenticate on an encrypted connection (`538` otherwise) — passwords never cross the LAN in clear text.
+- **Whitelist entries** require TLS by default (`530 Must issue a STARTTLS command first` otherwise). *Config → IP whitelist → Allow plain* lets one legacy device (old UPS card, camera) send unencrypted; the entry is then shown in red.
+- **Certificate:** without configuration the relay generates a self-signed certificate once, stored in the data volume (`/data/smtp-tls`, valid 5 years, CN/SAN = `SMTP_TLS_HOSTNAME`). Devices usually do not verify it; where a device insists, import `cert.pem` or use your own certificate: put `cert.pem`/`key.pem` in `./smtp-tls` (readable by uid 1000), uncomment the volume in `docker-compose.yml`, set `SMTP_TLS_CERT=/tls/cert.pem` and `SMTP_TLS_KEY=/tls/key.pem`. To renew the generated one, delete `/data/smtp-tls/*.pem` in the data volume and restart the relay.
+- **Old devices:** TLS 1.2 is the minimum. A device that only speaks TLS 1.0/1.1 needs `SMTP_TLS_MIN_VERSION=1.0` (applies to the whole relay) — or *Allow plain* on its whitelist entry, which is no worse on a trusted LAN segment.
 
 **TLS:** replace the self-signed certificate by copying a real `fullchain.pem` and `privkey.pem` into the `smtp-relay-certs` volume:
 

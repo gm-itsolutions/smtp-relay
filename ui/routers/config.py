@@ -272,6 +272,7 @@ async def whitelist_add(
     cidr: str = Form(""),
     description: str = Form(""),
     allowed_senders: str = Form(""),
+    tls_required: bool = Form(False),
     session: SessionPayload = Depends(require_user),
 ):
     try:
@@ -297,6 +298,7 @@ async def whitelist_add(
                 IpWhitelistEntry(
                     cidr=data.cidr,
                     allowed_senders=data.allowed_senders,
+                    tls_required=tls_required,
                     description=data.description or None,
                     is_enabled=True,
                 )
@@ -308,6 +310,7 @@ async def whitelist_add(
                     "action": "add",
                     "cidr": data.cidr,
                     "allowed_senders": data.allowed_senders.splitlines(),
+                    "tls_required": tls_required,
                 },
             )
     return RedirectResponse("/config/whitelist", status_code=303)
@@ -335,6 +338,33 @@ async def whitelist_toggle(
                 "action": "toggle",
                 "cidr": row.cidr,
                 "enabled": row.is_enabled,
+            },
+        )
+    return RedirectResponse("/config/whitelist", status_code=303)
+
+
+@router.post(
+    "/whitelist/{row_id}/tls",
+    include_in_schema=False,
+    dependencies=[Depends(require_csrf), Depends(require_user)],
+)
+async def whitelist_toggle_tls(
+    row_id: int,
+    request: Request,
+    session: SessionPayload = Depends(require_user),
+):
+    async with session_scope() as s:
+        row = await s.get(IpWhitelistEntry, row_id)
+        if row is None:
+            raise HTTPException(status_code=404)
+        row.tls_required = not row.tls_required
+        await audit_config_change(
+            s, session, request,
+            details={
+                "section": "whitelist",
+                "action": "toggle_tls",
+                "cidr": row.cidr,
+                "tls_required": row.tls_required,
             },
         )
     return RedirectResponse("/config/whitelist", status_code=303)

@@ -27,45 +27,64 @@ def _add(*rows):
 
 
 def test_account_bound_to_its_senders():
-    from relay.auth import client_may_use_sender
+    from relay.auth import client_policy_refusal as policy
 
     _add(
         SmtpAccount(username="printer-a", password_hash="x", allowed_senders="printer-a@kunde.de"),
         SmtpAccount(username="legacy", password_hash="x", allowed_senders=""),
     )
-    assert run(client_may_use_sender("printer-a", "10.0.0.21", "Printer-A@kunde.de"))
-    assert not run(client_may_use_sender("printer-a", "10.0.0.21", "nas@kunde.de"))
-    assert run(client_may_use_sender("legacy", "10.0.0.9", "nas@kunde.de"))
-    assert not run(client_may_use_sender("ghost", "10.0.0.9", "nas@kunde.de"))
+    assert run(policy("printer-a", "10.0.0.21", "Printer-A@kunde.de", True)) is None
+    assert run(policy("printer-a", "10.0.0.21", "nas@kunde.de", True)) == "sender"
+    assert run(policy("legacy", "10.0.0.9", "nas@kunde.de", True)) is None
+    assert run(policy("ghost", "10.0.0.9", "nas@kunde.de", True)) == "sender"
 
 
-def test_whitelist_entry_bound_to_its_senders():
-    from relay.auth import client_may_use_sender
+def test_whitelist_entry_bound_to_senders_and_tls():
+    from relay.auth import client_policy_refusal as policy
 
     _add(
         IpWhitelistEntry(cidr="192.168.20.5/32", allowed_senders="usv@kunde.de"),
+        IpWhitelistEntry(cidr="192.168.20.7/32", allowed_senders="cam@kunde.de", tls_required=False),
         IpWhitelistEntry(cidr="192.168.20.6/32", allowed_senders="", is_enabled=False),
     )
-    assert run(client_may_use_sender(None, "192.168.20.5", "usv@kunde.de"))
-    assert not run(client_may_use_sender(None, "192.168.20.5", "printer-a@kunde.de"))
-    assert not run(client_may_use_sender(None, "192.168.20.6", "usv@kunde.de"))
+    assert run(policy(None, "192.168.20.5", "usv@kunde.de", True)) is None
+    assert run(policy(None, "192.168.20.5", "usv@kunde.de", False)) == "tls"
+    assert run(policy(None, "192.168.20.5", "printer-a@kunde.de", True)) == "sender"
+    assert run(policy(None, "192.168.20.7", "cam@kunde.de", False)) is None
+    assert run(policy(None, "192.168.20.6", "usv@kunde.de", True)) == "sender"
 
 
-def test_handle_mail_refuses_foreign_sender():
+def _mail_from(server, auth_data, ip, address):
     from types import SimpleNamespace
 
     from aiosmtpd.smtp import Envelope
 
     from relay.smtp_handler import RelayHandler
 
+    session = SimpleNamespace(peer=(ip, 1234), auth_data=auth_data)
+    return run(RelayHandler(max_message_size=1000).handle_MAIL(server, session, Envelope(), address, []))
+
+
+def test_handle_mail_refuses_foreign_sender():
     _add(
         AuthorisedSender(address="printer-a@kunde.de"),
         AuthorisedSender(address="nas@kunde.de"),
         SmtpAccount(username="printer-a", password_hash="x", allowed_senders="printer-a@kunde.de"),
     )
-    session = SimpleNamespace(peer=("10.0.0.21", 1234), auth_data="printer-a")
-    reply = run(RelayHandler(max_message_size=1000).handle_MAIL(None, session, Envelope(), "nas@kunde.de", []))
-    assert reply.startswith("550")
+    assert _mail_from(None, "printer-a", "10.0.0.21", "nas@kunde.de").startswith("550")
+
+
+def test_handle_mail_requires_tls_for_whitelist():
+    from types import SimpleNamespace
+
+    _add(
+        AuthorisedSender(address="usv@kunde.de"),
+        IpWhitelistEntry(cidr="192.168.20.5/32", allowed_senders="usv@kunde.de"),
+    )
+    plain = SimpleNamespace(_tls_protocol=None)
+    smtps = SimpleNamespace(_tls_protocol=None, implicit_tls=True)
+    assert _mail_from(plain, None, "192.168.20.5", "usv@kunde.de").startswith("530")
+    assert _mail_from(smtps, None, "192.168.20.5", "usv@kunde.de") == "250 OK"
 
 
 @pytest.mark.parametrize(

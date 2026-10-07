@@ -12,6 +12,9 @@
     and networks up to <code>/24</code> (IPv6 <code>/64</code>). Prefer
     single hosts and an SMTP account wherever the device supports AUTH.
     Allowed senders: comma-separated; empty = any authorised sender.
+    <strong>TLS:</strong> required by default (STARTTLS on port 25/587 or
+    SMTPS on 465). Allow plain SMTP only for legacy devices that cannot do
+    TLS. Devices with an SMTP account always use TLS.
     Only effective when the whitelist mode is enabled under
     <a href="/config/settings">Settings</a>.
   </p>
@@ -23,6 +26,7 @@
     <input type="text" name="cidr" placeholder="10.0.0.0/24" required>
     <input type="text" name="allowed_senders" placeholder="Allowed senders (comma-separated)">
     <input type="text" name="description" placeholder="Description (optional)">
+    <label class="small"><input type="checkbox" name="tls_required" value="true" checked> TLS required</label>
     <button type="submit" class="btn btn-primary">Add</button>
   </form>
 
@@ -30,7 +34,7 @@
   <table class="data">
     <thead>
       <tr>
-        <th>CIDR</th><th>Allowed senders</th><th>Description</th><th>Status</th><th>Created</th><th></th>
+        <th>CIDR</th><th>Allowed senders</th><th>TLS</th><th>Description</th><th>Status</th><th>Created</th><th></th>
       </tr>
     </thead>
     <tbody>
@@ -38,6 +42,10 @@
       <tr>
         <td class="mono">{{ r.cidr }}</td>
         <td class="mono small">{% if r.allowed_senders %}{{ r.allowed_senders | replace('\n', ', ') }}{% else %}<span class="muted">any authorised</span>{% endif %}</td>
+        <td>
+          {% if r.tls_required %}<span class="pill pill-ok">required</span>
+          {% else %}<span class="pill pill-err">plain allowed</span>{% endif %}
+        </td>
         <td>{{ r.description or "" }}</td>
         <td>
           <span class="pill pill-{{ 'ok' if r.is_enabled else 'muted' }}">
@@ -50,6 +58,13 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="btn btn-small">
               {{ "Disable" if r.is_enabled else "Enable" }}
+            </button>
+          </form>
+          <form method="post" action="/config/whitelist/{{ r.id }}/tls"
+                {% if r.tls_required %}data-confirm="Allow unencrypted SMTP from {{ r.cidr }}?"{% endif %}>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="btn btn-small">
+              {{ "Allow plain" if r.tls_required else "Require TLS" }}
             </button>
           </form>
           <form method="post" action="/config/whitelist/{{ r.id }}/delete"

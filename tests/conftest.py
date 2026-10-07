@@ -39,8 +39,11 @@ def fresh_db(tmp_path, monkeypatch):
     from common.models import Settings
 
     async def _seed():
+        from common.routing import ensure_default_app
+
         async with db.session_scope() as s:
             s.add(Settings(id=1))
+            await ensure_default_app(s)  # same as relay/UI startup
 
     run(_seed())
     yield

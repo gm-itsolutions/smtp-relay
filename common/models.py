@@ -198,6 +198,11 @@ class IpWhitelistEntry(Base):
     allowed_senders: Mapped[str] = mapped_column(
         Text, nullable=False, default="", server_default=""
     )
+    # Refuse MAIL FROM unless the session is encrypted (STARTTLS or SMTPS).
+    # Switch off only for legacy devices that cannot do TLS.
+    tls_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="1"
+    )
     description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[_dt.datetime] = mapped_column(

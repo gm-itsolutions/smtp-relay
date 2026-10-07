@@ -50,26 +50,32 @@ services:
     container_name: smtp-relay-smtp
     restart: unless-stopped
     ports:
-      - "${SMTP_BIND_HOST:-0.0.0.0}:${SMTP_BIND_PORT:-2525}:2525"
+      # 25 and 587: plain + STARTTLS, 465: SMTPS (implicit TLS).
+      - "${SMTP_BIND_HOST:-0.0.0.0}:${SMTP_BIND_PORT:-25}:2525"
+      - "${SMTP_BIND_HOST:-0.0.0.0}:${SMTP_SUBMISSION_PORT:-587}:2525"
+      - "${SMTP_BIND_HOST:-0.0.0.0}:${SMTPS_BIND_PORT:-465}:2465"
     environment:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
       DATABASE_URL: "sqlite+aiosqlite:////data/relay.db"
       ARCHIVE_PATH: "/data/archive"
       SMTP_LISTEN_HOST: "0.0.0.0"
       SMTP_LISTEN_PORT: "2525"
+      SMTPS_LISTEN_PORT: "2465"
       SMTP_MAX_MESSAGE_SIZE: ${SMTP_MAX_MESSAGE_SIZE:-31457280}
       SMTP_MAX_RECIPIENTS: ${SMTP_MAX_RECIPIENTS:-100}
       # 0 = keep no copy of delivered mail (see README, data protection).
       ARCHIVE_ENABLED: ${ARCHIVE_ENABLED:-1}
-      # Optional STARTTLS: mount PEM files via ./smtp-tls (see below).
+      # TLS is always on. Without SMTP_TLS_CERT/KEY a self-signed certificate
+      # is generated once into /data/smtp-tls (see README -> TLS).
       SMTP_TLS_CERT: ${SMTP_TLS_CERT:-}
       SMTP_TLS_KEY: ${SMTP_TLS_KEY:-}
-      SMTP_AUTH_REQUIRE_TLS: ${SMTP_AUTH_REQUIRE_TLS:-0}
+      SMTP_TLS_HOSTNAME: ${SMTP_TLS_HOSTNAME:-}
+      SMTP_TLS_MIN_VERSION: ${SMTP_TLS_MIN_VERSION:-1.2}
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - data:/data
-      # STARTTLS: uncomment and set SMTP_TLS_CERT=/tls/cert.pem,
+      # Own certificate: uncomment and set SMTP_TLS_CERT=/tls/cert.pem,
       # SMTP_TLS_KEY=/tls/key.pem in .env (files readable by uid 1000).
       # - ./smtp-tls:/tls:ro
     read_only: true

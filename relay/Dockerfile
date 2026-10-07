@@ -37,7 +37,7 @@ COPY --chown=relay:relay relay/ ./relay/
 USER relay
 
 # SMTP listener port inside the container.
-EXPOSE 2525
+EXPOSE 2525 2465
 
 # The relay has no healthcheck on the HTTP side — instead it updates
 # a heartbeat row in the DB, which the UI renders on the dashboard.

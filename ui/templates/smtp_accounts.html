@@ -24,6 +24,7 @@
                 placeholder="empty = any IP. Example: 10.0.0.0/24 or 192.168.1.10"></textarea>
       <span class="small">One per line, or comma-separated. Login is refused if the source IP does not match any of these.</span>
     </label>
+    <p class="small muted">SMTP accounts always use TLS: STARTTLS on port 25/587 or SMTPS on 465. Devices without TLS support: use an IP whitelist entry instead.</p>
     <label>
       Allowed senders
       <textarea name="allowed_senders" rows="2"
