@@ -18,9 +18,9 @@ Geräte ──SMTP mit TLS (465 / 587 / 25)──▶ smtp-relay ──Graph send
 - **Datenschutz:** kein Mailarchiv im Standard
 - **Container:** ohne root, read-only, lokal aus dem Quellcode gebaut; automatische Tests bei jedem Push
 
-## Dokumentation
+## Handbuch
 
-**[Wiki → docs/](docs/README.md)** – Installation (im Kundennetz oder öffentlich auf einem VPS), Microsoft 365, Konfiguration, Geräte, TLS, weitere Absender und Tenants, Betrieb, Tests, Fehlersuche, Sicherheit.
+**[Handbuch im Wiki](https://git.gm-itsolutions.de/gm-itsolutions/smtp-relay/wiki)** – Installation (im Kundennetz oder öffentlich auf einem VPS), Microsoft 365, Konfiguration, Geräte, TLS, weitere Absender und Tenants, Betrieb, Tests, Fehlersuche, Sicherheit.
 
 ## Schnellstart
 
@@ -28,11 +28,11 @@ Geräte ──SMTP mit TLS (465 / 587 / 25)──▶ smtp-relay ──Graph send
 git clone https://github.com/gm-itsolutions/smtp-relay.git /opt/smtp-relay
 cd /opt/smtp-relay
 git checkout <aktueller Release-Tag>
-# .env anlegen: siehe docs/02-installation.md
+# .env anlegen: siehe Wiki, Seite Installation
 docker compose up -d --build
 ```
 
-Danach [Microsoft 365 einrichten](docs/03-microsoft-365.md) und [Relay konfigurieren](docs/04-relay-konfiguration.md).
+Danach [Microsoft 365 einrichten](https://git.gm-itsolutions.de/gm-itsolutions/smtp-relay/wiki/Microsoft-365-einrichten) und [Relay konfigurieren](https://git.gm-itsolutions.de/gm-itsolutions/smtp-relay/wiki/Relay-konfigurieren).
 
 ## Entwicklung
 
