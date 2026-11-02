@@ -1,6 +1,6 @@
 # VPS override: SMTP and the admin UI reachable from the internet.
 # Activate with COMPOSE_FILE=docker-compose.yml:docker-compose.vps.yml in .env
-# (see docs/12-vps.md). Needs Docker Compose >= 2.24 for !override.
+# (see Wiki: Öffentlich-auf-einem-VPS). Needs Docker Compose >= 2.24 for !override.
 services:
   relay:
     # No port 25 on the internet: only submission (587, STARTTLS) and SMTPS (465).

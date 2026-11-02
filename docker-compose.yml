@@ -64,15 +64,15 @@ services:
       SMTPS_LISTEN_PORT: "2465"
       SMTP_MAX_MESSAGE_SIZE: ${SMTP_MAX_MESSAGE_SIZE:-31457280}
       SMTP_MAX_RECIPIENTS: ${SMTP_MAX_RECIPIENTS:-100}
-      # Off by default: no copy of delivered mail (see docs/08-betrieb.md).
+      # Off by default: no copy of delivered mail (see Wiki: Betrieb).
       ARCHIVE_ENABLED: ${ARCHIVE_ENABLED:-0}
       # TLS is always on. Without SMTP_TLS_CERT/KEY a self-signed certificate
-      # is generated once into /data/smtp-tls (see docs/06-tls.md).
+      # is generated once into /data/smtp-tls (see Wiki: TLS-und-Zertifikate).
       SMTP_TLS_CERT: ${SMTP_TLS_CERT:-}
       SMTP_TLS_KEY: ${SMTP_TLS_KEY:-}
       SMTP_TLS_HOSTNAME: ${SMTP_TLS_HOSTNAME:-}
       SMTP_TLS_MIN_VERSION: ${SMTP_TLS_MIN_VERSION:-1.2}
-      # Internet-facing hardening (see docs/12-vps.md).
+      # Internet-facing hardening (see Wiki: Öffentlich-auf-einem-VPS).
       SMTP_PUBLIC_MODE: ${SMTP_PUBLIC_MODE:-0}
       SMTP_MAX_CONNECTIONS: ${SMTP_MAX_CONNECTIONS:-100}
       SMTP_MAX_CONNECTIONS_PER_IP: ${SMTP_MAX_CONNECTIONS_PER_IP:-10}
