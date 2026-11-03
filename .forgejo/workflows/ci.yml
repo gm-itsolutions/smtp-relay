@@ -1,0 +1,22 @@
+# Forgejo CI (Runner gm-hosting). Tests und Docker-Builds bei jedem Push und Pull Request.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: https://git.gm-itsolutions.de/gm-actions/actions-checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: python -m pip install -r ui/requirements.txt -r relay/requirements.txt pytest
+      - run: python -m pytest -q
+  docker:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [relay, ui, nginx]
+    steps:
+      - uses: https://git.gm-itsolutions.de/gm-actions/actions-checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Nur bauen, kein Push (prüft Basisimage-Updates)
+      - run: docker build -f ${{ matrix.image }}/Dockerfile -t ci-test-${{ matrix.image }} .
