@@ -16,6 +16,7 @@ httpx==0.28.1
 # ORM + async driver.
 SQLAlchemy==2.1.8
 aiosqlite==0.22.1
+greenlet==3.5.6
 
 # Password hashing (used to verify SMTP account passwords).
 bcrypt==5.0.0
